@@ -242,7 +242,9 @@ class NuScenesDataset(DatasetTemplate):
             input_dict['car_from_global'] = info['car_from_global']
             input_dict['location'] = info['location']
 
-        if 'gt_boxes' in info:
+        self_supervised = self.dataset_cfg.get('SELF_SUPERVISED', False)
+
+        if not self_supervised and 'gt_boxes' in info:
             if self.dataset_cfg.get('FILTER_MIN_POINTS_IN_GT', False):
                 mask = (info['num_lidar_pts'] > self.dataset_cfg.FILTER_MIN_POINTS_IN_GT - 1)
             else:
@@ -263,13 +265,14 @@ class NuScenesDataset(DatasetTemplate):
 
         data_dict = self.prepare_data(data_dict=input_dict)
 
-        if self.dataset_cfg.get('SET_NAN_VELOCITY_TO_ZEROS', False) and 'gt_boxes' in info:
-            gt_boxes = data_dict['gt_boxes']
-            gt_boxes[np.isnan(gt_boxes)] = 0
-            data_dict['gt_boxes'] = gt_boxes
+        if not self_supervised:
+            if self.dataset_cfg.get('SET_NAN_VELOCITY_TO_ZEROS', False) and 'gt_boxes' in info:
+                gt_boxes = data_dict['gt_boxes']
+                gt_boxes[np.isnan(gt_boxes)] = 0
+                data_dict['gt_boxes'] = gt_boxes
 
-        if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
-            data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
+            if not self.dataset_cfg.PRED_VELOCITY and 'gt_boxes' in data_dict:
+                data_dict['gt_boxes'] = data_dict['gt_boxes'][:, [0, 1, 2, 3, 4, 5, 6, -1]]
 
         return data_dict
 

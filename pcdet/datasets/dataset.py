@@ -212,7 +212,9 @@ class DatasetTemplate(torch_data.Dataset):
                 voxel_num_points: optional (num_voxels)
                 ...
         """
-        if self.training:
+        self_supervised = self.dataset_cfg.get('SELF_SUPERVISED', False)
+
+        if self.training and not self_supervised:
             assert 'gt_boxes' in data_dict, 'gt_boxes should be provided for training'
             gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
             
@@ -226,6 +228,21 @@ class DatasetTemplate(torch_data.Dataset):
             )
             if 'calib' in data_dict:
                 data_dict['calib'] = calib
+        elif self.training and self_supervised and self.data_augmentor is not None:
+            # SSL mode: inject empty gt_boxes/gt_names so augmentors don't crash
+            # (augmentors like random_world_flip access data_dict['gt_boxes'] directly)
+            had_gt = 'gt_boxes' in data_dict
+            if not had_gt:
+                data_dict['gt_boxes'] = np.zeros((0, 7), dtype=np.float32)
+                data_dict['gt_names'] = np.array([], dtype='<U16')
+            else:
+                gt_boxes_mask = np.array([n in self.class_names for n in data_dict['gt_names']], dtype=np.bool_)
+                data_dict['gt_boxes_mask'] = gt_boxes_mask
+            data_dict = self.data_augmentor.forward(data_dict=data_dict)
+            if not had_gt:
+                data_dict.pop('gt_boxes', None)
+                data_dict.pop('gt_names', None)
+
         if self.use_map:
             data_dict = self.set_lidar_aug_matrix_map(data_dict)
         else:
@@ -248,7 +265,7 @@ class DatasetTemplate(torch_data.Dataset):
             data_dict=data_dict
         )
 
-        if self.training and len(data_dict['gt_boxes']) == 0:
+        if self.training and not self_supervised and len(data_dict['gt_boxes']) == 0:
             new_index = np.random.randint(self.__len__())
             return self.__getitem__(new_index)
 
@@ -339,7 +356,7 @@ class DatasetTemplate(torch_data.Dataset):
 
                         images.append(image_pad)
                     ret[key] = np.stack(images, axis=0)
-                elif key in ['calib']:
+                elif key in ['calib', 'img_process_infos']:
                     ret[key] = val
                 elif key in ["points_2d"]:
                     max_len = max([len(_val) for _val in val])
