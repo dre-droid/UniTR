@@ -1,0 +1,50 @@
+# =================================================================
+# UniTR Environment Setup - NVIDIA L40S (CUDA 12.1 / Python 3.10)
+# =================================================================
+
+# 1. Core PyTorch & Build Tools (Run via Conda)
+# - pytorch-cuda=12.1: Matches the L40S hardware (Lovelace architecture).
+# - cuda-nvcc=12.1: Installs the C++ compiler required to build custom 3D extensions via setup.py.
+# - mkl<2024 / intel-openmp<2024: Prevents the PyTorch 2.5 "iJIT_NotifyEvent" CPU crash bug.
+# - gcc=11 gxx=11: Downgrade needed by CUDA12.1
+# - cuda-cccl=12.1: Fix for compilation errors
+# Command: conda install pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-nvcc=12.1 nvidia cuda-toolkit=12.1 "mkl<2024" "intel-openmp<2024" -c pytorch -c nvidia -y
+# Command: conda install gcc=11 gxx=11 python=3.10 -c conda-forge -y
+# Command: conda install -c nvidia cuda-cccl=12.1 -y
+# Command: conda install -c nvidia cuda-libraries-dev=12.1 -y
+
+# 2. Standard Dependencies
+numpy<2.0.0       # CRITICAL: Prevents NumPy 2.0 from breaking numba/spconv
+llvmlite
+numba             
+tensorboardX
+easydict
+pyyaml
+scikit-image
+tqdm
+SharedArray
+opencv-python
+pyquaternion
+av2
+kornia
+
+# 3. Hardware-Specific CUDA Libraries
+spconv-cu121      # Required for 3D Sparse Convolutions on Lovelace
+
+# 4. PyTorch Geometric Dependencies (Manual Install Required)
+# Torch-scatter must be compiled against the exact Torch version installed in Step 1.
+# First, check your Torch version: python -c "import torch; print(torch.__version__.split('+')[0])"
+# Then run: pip install torch-scatter -f https://data.pyg.org/whl/torch-[VERSION]+cu121.html
+
+# 5. Fix for compilation errors
+#export CUDA_HOME=$CONDA_PREFIX
+#export CC=$CONDA_PREFIX/bin/gcc
+#export CXX=$CONDA_PREFIX/bin/g++
+#export MAX_JOBS=1
+export CPATH=$CONDA_PREFIX/include:$CPATH
+
+# Create a physical link so the compiler CANNOT miss the headers
+# This bypasses the need for the compiler to "find" the basement folder.
+ln -sf $CONDA_PREFIX/targets/x86_64-linux/include/curand_kernel.h $CONDA_PREFIX/include/curand_kernel.h
+ln -sf $CONDA_PREFIX/targets/x86_64-linux/include/curand_uniform.h $CONDA_PREFIX/include/curand_uniform.h
+

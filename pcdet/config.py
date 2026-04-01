@@ -48,9 +48,28 @@ def cfg_from_list(cfg_list, config):
             d[subkey] = value
 
 
-def merge_new_config(config, new_config):
+def _resolve_base_config(base_config_path, source_dir):
+    """Resolve a relative _BASE_CONFIG_ path by searching up from source_dir."""
+    p = Path(base_config_path)
+    if p.is_absolute():
+        return str(p)
+    if source_dir is not None:
+        # Walk up from source_dir to find the first ancestor where the path exists
+        d = Path(source_dir).resolve()
+        while True:
+            candidate = d / base_config_path
+            if candidate.exists():
+                return str(candidate)
+            if d.parent == d:
+                break
+            d = d.parent
+    return base_config_path  # fallback to original (will fail with a clear error)
+
+
+def merge_new_config(config, new_config, source_dir=None):
     if '_BASE_CONFIG_' in new_config:
-        with open(new_config['_BASE_CONFIG_'], 'r') as f:
+        base_config_path = _resolve_base_config(new_config['_BASE_CONFIG_'], source_dir)
+        with open(base_config_path, 'r') as f:
             try:
                 yaml_config = yaml.safe_load(f, Loader=yaml.FullLoader)
             except:
@@ -63,19 +82,21 @@ def merge_new_config(config, new_config):
             continue
         if key not in config:
             config[key] = EasyDict()
-        merge_new_config(config[key], val)
+        merge_new_config(config[key], val, source_dir=source_dir)
 
     return config
 
 
 def cfg_from_yaml_file(cfg_file, config):
+    cfg_file = Path(cfg_file)
+    source_dir = str(cfg_file.resolve().parent)
     with open(cfg_file, 'r') as f:
         try:
             new_config = yaml.safe_load(f, Loader=yaml.FullLoader)
         except:
             new_config = yaml.safe_load(f)
 
-        merge_new_config(config=config, new_config=new_config)
+        merge_new_config(config=config, new_config=new_config, source_dir=source_dir)
 
     return config
 
