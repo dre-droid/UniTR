@@ -106,6 +106,8 @@ class UniTR(nn.Module):
         # Fuse Backbone
         fuse_cfg = self.model_cfg.get('FUSE_BACKBONE', None)
         self.fuse_on = fuse_cfg is not None
+        self.image2lidar_on = False
+        self.lidar2image_on = False
         if self.fuse_on:
             # image2lidar
             image2lidar_cfg = fuse_cfg.get('IMAGE2LIDAR', None)
