@@ -48,6 +48,34 @@ class NuScenesDataset(DatasetTemplate):
                 continue
             with open(info_path, 'rb') as f:
                 infos = pickle.load(f)
+                if isinstance(infos, dict) and 'infos' in infos:
+                    infos = infos['infos']
+                
+                # Sanitize prefix differences between generic vs mini splits
+                for info in infos:
+                    if 'lidar_path' in info and info['lidar_path'].startswith('./data/nuscenes/'):
+                        info['lidar_path'] = info['lidar_path'].replace('./data/nuscenes/', '')
+                    if 'cams' in info:
+                        for cam in info['cams'].values():
+                            if 'cam_intrinsic' in cam:
+                                cam['camera_intrinsics'] = cam.pop('cam_intrinsic')
+                            if 'data_path' in cam and cam['data_path'].startswith('./data/nuscenes/'):
+                                cam['data_path'] = cam['data_path'].replace('./data/nuscenes/', '')
+                    if 'sweeps' in info:
+                        for sweep in info['sweeps']:
+                            if 'data_path' in sweep:
+                                sweep['lidar_path'] = sweep.pop('data_path')
+                            if 'lidar_path' in sweep and sweep['lidar_path'].startswith('./data/nuscenes/'):
+                                sweep['lidar_path'] = sweep['lidar_path'].replace('./data/nuscenes/', '')
+                            if 'transform_matrix' not in sweep and 'sensor2lidar_rotation' in sweep:
+                                import numpy as np
+                                tm = np.eye(4, dtype=np.float32)
+                                tm[:3, :3] = sweep['sensor2lidar_rotation']
+                                tm[:3, 3] = sweep['sensor2lidar_translation']
+                                sweep['transform_matrix'] = tm
+                            if 'time_lag' not in sweep and 'timestamp' in sweep and 'timestamp' in info:
+                                sweep['time_lag'] = (info['timestamp'] - sweep['timestamp']) / 1e6
+                                
                 nuscenes_infos.extend(infos)
 
         self.infos.extend(nuscenes_infos)
@@ -114,7 +142,9 @@ class NuScenesDataset(DatasetTemplate):
         sweep_points_list = [points]
         sweep_times_list = [np.zeros((points.shape[0], 1))]
 
-        for k in np.random.choice(len(info['sweeps']), max_sweeps - 1, replace=False):
+        num_sweeps = len(info['sweeps'])
+        choice_num = min(num_sweeps, max_sweeps - 1)
+        for k in np.random.choice(num_sweeps, choice_num, replace=False):
             points_sweep, times_sweep = self.get_sweep(info['sweeps'][k])
             sweep_points_list.append(points_sweep)
             sweep_times_list.append(times_sweep)
