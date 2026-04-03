@@ -62,3 +62,4 @@ venv.bak/
 data/
 output/
 events.out.tfevents.*
+tools/slurm_logs/
