@@ -280,9 +280,17 @@ class NuScenesDataset(DatasetTemplate):
             else:
                 mask = None
 
+            # Handle MMDetection3D-style separate gt_velocity key or missing velocity
+            gt_boxes = info['gt_boxes']
+            if gt_boxes.shape[1] == 7:
+                if 'gt_velocity' in info:
+                    gt_boxes = np.concatenate([gt_boxes, info['gt_velocity']], axis=-1)
+                else:
+                    gt_boxes = np.concatenate([gt_boxes, np.zeros((gt_boxes.shape[0], 2), dtype=gt_boxes.dtype)], axis=-1)
+
             input_dict.update({
                 'gt_names': info['gt_names'] if mask is None else info['gt_names'][mask],
-                'gt_boxes': info['gt_boxes'] if mask is None else info['gt_boxes'][mask]
+                'gt_boxes': gt_boxes if mask is None else gt_boxes[mask]
             })
             if 'gt_boxes_2d' in info:
                 info['gt_boxes_2d'] = info['gt_boxes_2d'][info['empty_mask']]
@@ -310,7 +318,7 @@ class NuScenesDataset(DatasetTemplate):
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
-        nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
+        nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path.parent), verbose=True)
         nusc_annos = nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc)
         nusc_annos['meta'] = {
             'use_camera': False,
