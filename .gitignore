@@ -63,3 +63,5 @@ data/
 output/
 events.out.tfevents.*
 tools/slurm_logs/
+work_log
+*.pth

@@ -154,24 +154,10 @@ class iBOTUniTR(nn.Module):
             'voxel_coords': voxel_coords,
             'voxel_num': voxel_num,
         }
-        student_out = self.student_backbone(student_batch)
-
-        # Patch masking: mask the image patches in student output
-        # student_out['pillar_features'] has shape (N, 128) — these are the lidar voxel outputs
-        # Image patches were processed inside the backbone; we need to mask at the input level.
-        # Since UniTR processes voxels and patches jointly, we apply patch masking to
-        # patch_features before backbone. Let's hook into the backbone differently.
-        #
-        # Actually, the cleanest approach: mask patch features AFTER PatchEmbed but BEFORE
-        # the backbone processes them. This requires modifying the forward to allow injecting
-        # masked features. For v1, we'll do a simpler approach: mask the output features
-        # and compute loss on those positions (the teacher still sees unmasked outputs).
-        #
-        # V1 APPROACH: Apply masking at the output level.
-        # - Voxel masking: already done at input (above)
-        # - Patch masking: create mask, apply loss only on those positions
-
+        student_out = self.student_backbone(student_batch, patch_masker=self.patch_masker)
         student_voxel_out = student_out['pillar_features']  # (N, 128)
+        student_patch_out = student_out['patch_features']   # (P, 128)
+        patch_mask = student_out['patch_mask']              # (P,)
 
         # ---- Step 4: Teacher forward (unmasked) ----
         with torch.no_grad():
@@ -184,23 +170,34 @@ class iBOTUniTR(nn.Module):
             }
             teacher_out = self.teacher_backbone(teacher_batch)
             teacher_voxel_out = teacher_out['pillar_features']  # (N, 128)
+            teacher_patch_out = teacher_out['patch_features']   # (P, 128)
 
         # ---- Step 5: Project ----
-        student_proj = self.student_proj(student_voxel_out)   # (N, proj_out)
+        # Project voxels
+        student_voxel_proj = self.student_proj(student_voxel_out)   # (N, proj_out)
         with torch.no_grad():
-            teacher_proj = self.teacher_proj(teacher_voxel_out)  # (N, proj_out)
+            teacher_voxel_proj = self.teacher_proj(teacher_voxel_out)  # (N, proj_out)
 
-        # ---- Step 6: Compute L_MIM loss on masked voxel positions ----
-        loss_voxel = self.loss_fn(student_proj, teacher_proj, voxel_mask)
+        # Project patches
+        student_patch_proj = self.student_proj(student_patch_out)   # (P, proj_out)
+        with torch.no_grad():
+            teacher_patch_proj = self.teacher_proj(teacher_patch_out)  # (P, proj_out)
+
+        # ---- Step 6: Compute L_MIM loss on masked positions ----
+        loss_voxel = self.loss_fn(student_voxel_proj, teacher_voxel_proj, voxel_mask)
+        loss_patch = self.loss_fn(student_patch_proj, teacher_patch_proj, patch_mask)
 
         # ---- Total loss ----
-        loss = loss_voxel
+        loss = loss_voxel + loss_patch
 
         tb_dict = {
             'loss_mim_voxel': loss_voxel.item(),
+            'loss_mim_patch': loss_patch.item(),
+            'loss_total': loss.item(),
             'ema_momentum': self._get_momentum(1),  # will be overwritten in training loop
             'num_voxels': voxel_num,
             'num_masked_voxels': voxel_mask.sum().item(),
+            'num_masked_patches': patch_mask.sum().item(),
         }
         disp_dict = {}
 

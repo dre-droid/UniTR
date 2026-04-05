@@ -14,7 +14,7 @@ class UniTR(nn.Module):
     '''
     UniTR: A Unified and Efficient Multi-Modal Transformer for Bird's-Eye-View Representation.
     Main args:
-        set_info (list[list[int, int]]): A list of set config for each stage. Eelement i contains 
+        set_info (list[list[int, int]]): A list of set config for each stage. Element i contains 
             [set_size, block_num], where set_size is the number of voxel in a set and block_num is the
             number of blocks for stage i. Length: stage_num.
         d_model (list[int]): the number of filters in first linear layer of each transformer encoder
@@ -140,7 +140,7 @@ class UniTR(nn.Module):
 
         self._reset_parameters()
 
-    def forward(self, batch_dict):
+    def forward(self, batch_dict, patch_masker=None):
         '''
         Args:
             bacth_dict (dict): 
@@ -162,7 +162,7 @@ class UniTR(nn.Module):
         '''
         # lidar(3d) and image(2d) preprocess
         multi_feat, voxel_info, patch_info, multi_set_voxel_inds_list, multi_set_voxel_masks_list, multi_pos_embed_list = self._input_preprocess(
-            batch_dict)
+            batch_dict, patch_masker)
         # lidar(3d) and image(3d) preprocess
         if self.image2lidar_on:
             image2lidar_inds_list, image2lidar_masks_list, multi_pos_embed_list = self._image2lidar_preprocess(
@@ -207,9 +207,10 @@ class UniTR(nn.Module):
                     batch_dict['image_features'].append(batch_spatial_features)
         batch_dict['pillar_features'] = batch_dict['voxel_features'] = output[:voxel_num]
         batch_dict['voxel_coords'] = voxel_info[f'voxel_coors_stage{self.stage_num - 1}']
+        batch_dict['patch_features'] = output[voxel_num:]
         return batch_dict
 
-    def _input_preprocess(self, batch_dict):
+    def _input_preprocess(self, batch_dict, patch_masker=None):
         # image branch
         imgs = batch_dict['camera_imgs']
         B, N, C, H, W = imgs.shape  # 6, 6, 3, 256, 704
@@ -219,7 +220,11 @@ class UniTR(nn.Module):
         batch_dict['hw_shape'] = hw_shape
 
         # 36*2816, C
-        batch_dict['patch_features'] = imgs.view(-1, imgs.shape[-1])
+        patch_features = imgs.view(-1, imgs.shape[-1])
+        if patch_masker is not None:
+            patch_features, patch_mask = patch_masker(patch_features)
+            batch_dict['patch_mask'] = patch_mask
+        batch_dict['patch_features'] = patch_features
         if self.patch_coords is not None and ((self.patch_coords[:, 0].max().int().item() + 1) == B*N):
             batch_dict['patch_coords'] = self.patch_coords.clone()
         else:
