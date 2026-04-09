@@ -330,20 +330,6 @@ class Detector3DTemplate(nn.Module):
     def _load_state_dict(self, model_state_disk, *, strict=True):
         state_dict = self.state_dict()  # local cache of state_dict
 
-        # Auto-map SSL pretrained 'student_backbone' keys to the downstream 'mm_backbone'
-        has_downstream_mm_backbone = any(k.startswith('mm_backbone.') for k in state_dict.keys())
-        has_ssl_student_backbone = any(k.startswith('student_backbone.') for k in model_state_disk.keys())
-
-        if has_downstream_mm_backbone and has_ssl_student_backbone:
-            remapped_state_disk = {}
-            for key, val in model_state_disk.items():
-                if key.startswith('student_backbone.'):
-                    new_key = key.replace('student_backbone.', 'mm_backbone.', 1)
-                    remapped_state_disk[new_key] = val
-                else:
-                    remapped_state_disk[key] = val
-            model_state_disk = remapped_state_disk
-
         spconv_keys = find_all_spconv_keys(self)
 
         update_model_state = {}
