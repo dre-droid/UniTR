@@ -102,7 +102,7 @@ class MapImage2Lidar(nn.Module):
             int((self.pc_range[i+3]-self.pc_range[i])/self.voxel_size[i]) for i in range(3)]
 
         self.points = get_points(
-            self.pc_range, self.sample_num, self.space_shape).cuda()
+            self.pc_range, self.sample_num, self.space_shape).to('cuda' if torch.cuda.is_available() else 'cpu')
         self.accelerate = accelerate
         if self.accelerate:
             self.cache = None
@@ -206,7 +206,7 @@ class MapLidar2Image(nn.Module):
             self.full_lidar2image_coors_zyx = None
             # only support one point in a voxel
             self.points = get_points(
-                self.pc_range, self.sample_num, self.space_shape).cuda()
+                self.pc_range, self.sample_num, self.space_shape).to('cuda' if torch.cuda.is_available() else 'cpu')
         self.use_map = use_map
 
     def pre_compute(self, batch_dict):

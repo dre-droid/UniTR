@@ -80,9 +80,9 @@ class DynamicPillarVFE(VFETemplate):
         self.scale_xy = grid_size[0] * grid_size[1]
         self.scale_y = grid_size[1]
         
-        self.grid_size = torch.tensor(grid_size).cuda()
-        self.voxel_size = torch.tensor(voxel_size).cuda()
-        self.point_cloud_range = torch.tensor(point_cloud_range).cuda()
+        self.grid_size = torch.tensor(grid_size).to('cuda' if torch.cuda.is_available() else 'cpu')
+        self.voxel_size = torch.tensor(voxel_size).to('cuda' if torch.cuda.is_available() else 'cpu')
+        self.point_cloud_range = torch.tensor(point_cloud_range).to('cuda' if torch.cuda.is_available() else 'cpu')
 
     def get_output_feature_dim(self):
         return self.num_filters[-1]
@@ -180,9 +180,9 @@ class DynamicPillarVFESimple2D(VFETemplate):
         self.scale_xy = grid_size[0] * grid_size[1]
         self.scale_y = grid_size[1]
 
-        self.grid_size = torch.tensor(grid_size[:2]).cuda()
-        self.voxel_size = torch.tensor(voxel_size).cuda()
-        self.point_cloud_range = torch.tensor(point_cloud_range).cuda()
+        self.grid_size = torch.tensor(grid_size[:2]).to('cuda' if torch.cuda.is_available() else 'cpu')
+        self.voxel_size = torch.tensor(voxel_size).to('cuda' if torch.cuda.is_available() else 'cpu')
+        self.point_cloud_range = torch.tensor(point_cloud_range).to('cuda' if torch.cuda.is_available() else 'cpu')
 
     def get_output_feature_dim(self):
         return self.num_filters[-1]

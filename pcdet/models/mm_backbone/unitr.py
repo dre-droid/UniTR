@@ -62,7 +62,7 @@ class UniTR(nn.Module):
             patch_size[0]), torch.arange(patch_size[1]))
         patch_z = torch.zeros((patch_size[0] * patch_size[1], 1))
         self.patch_zyx = torch.cat(
-            [patch_z, patch_y.reshape(-1, 1), patch_x.reshape(-1, 1)], dim=-1).cuda()
+            [patch_z, patch_y.reshape(-1, 1), patch_x.reshape(-1, 1)], dim=-1).to('cuda' if torch.cuda.is_available() else 'cpu')
         # patch coords with batch id
         self.patch_coords = None
 
