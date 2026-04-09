@@ -221,10 +221,14 @@ class UniTR(nn.Module):
 
         # 36*2816, C
         patch_features = imgs.view(-1, imgs.shape[-1])
+
+        # SSL masking
         if patch_masker is not None:
             patch_features, patch_mask = patch_masker(patch_features)
             batch_dict['patch_mask'] = patch_mask
         batch_dict['patch_features'] = patch_features
+
+        # compute patch_coords: [X: 0-87, Y: 0-31, Z: 0], only needed for self attention
         if self.patch_coords is not None and ((self.patch_coords[:, 0].max().int().item() + 1) == B*N):
             batch_dict['patch_coords'] = self.patch_coords.clone()
         else:
@@ -233,6 +237,8 @@ class UniTR(nn.Module):
             batch_dict['patch_coords'] = torch.cat([batch_idx, self.patch_zyx.clone()[
                                                    None, ::].repeat(B*N, 1, 1).view(-1, 3)], dim=-1).long()
             self.patch_coords = batch_dict['patch_coords'].clone()
+
+        # compute sets for windowed attention, organized in inds_list, masks_list, pos_embed_list
         patch_info = self.image_input_layer(batch_dict)
         patch_feat = batch_dict['patch_features']
         patch_set_voxel_inds_list = [[patch_info[f'set_voxel_inds_stage{s}_shift{i}']
