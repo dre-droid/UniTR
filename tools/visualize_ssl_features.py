@@ -52,6 +52,7 @@ def parse_args():
     parser.add_argument('--query_xy', type=float, nargs=2, default=[0.0, 0.0],
                         help='Query point [x, y] in meters for bev_similarity mode')
     parser.add_argument('--output_dir', type=str, default='../output/visualizations')
+    parser.add_argument('--no_overlay', action='store_true', help='Do not overlay features on original images')
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER)
     return parser.parse_args()
 
@@ -312,7 +313,7 @@ def visualize_bev_pca(result, output_dir, logger, pca_obj=None):
     return out_path, pca_obj
 
 
-def visualize_camera_pca(result, output_dir, logger, pca_obj=None):
+def visualize_camera_pca(result, output_dir, logger, pca_obj=None, no_overlay=False):
     """
     Mode 2: Camera images overlaid with PCA of image patch features.
     """
@@ -362,8 +363,12 @@ def visualize_camera_pca(result, output_dir, logger, pca_obj=None):
         ).resize((704, 256), Image.BILINEAR)) / 255.0
         
         # Alpha blend
-        alpha = 0.5
-        blended = img * (1 - alpha) + rgb_upsampled * alpha
+        if no_overlay:
+            blended = rgb_upsampled
+        else:
+            alpha = 0.5
+            blended = img * (1 - alpha) + rgb_upsampled * alpha
+        
         blended = np.clip(blended, 0, 1)
         
         ax.imshow(blended)
@@ -471,10 +476,16 @@ def main():
     logger.info(f'Extracting features for sample index {args.sample_idx}...')
     
     # Iterate to the requested sample
-    for i, batch_dict in enumerate(dataloader):
+    batch_dict = None
+    for i, data in enumerate(dataloader):
         if i == args.sample_idx:
+            batch_dict = data
             break
     
+    if batch_dict is None:
+        logger.error(f'Could not find sample index {args.sample_idx}. Dataloader length is {len(dataloader)}. Check your dataset config and paths.')
+        return
+
     # Move to GPU
     from pcdet.models import load_data_to_gpu
     load_data_to_gpu(batch_dict)
@@ -485,7 +496,7 @@ def main():
     for mode in modes:
         if mode == 'camera_pca':
             result = extract_features_with_image_patches(model, batch_dict, logger)
-            visualize_camera_pca(result, args.output_dir, logger)
+            visualize_camera_pca(result, args.output_dir, logger, no_overlay=args.no_overlay)
         elif mode == 'bev_pca':
             result = extract_features_with_image_patches(model, batch_dict, logger) # capture joint
             visualize_bev_pca(result, args.output_dir, logger)
