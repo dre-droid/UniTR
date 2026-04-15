@@ -61,7 +61,8 @@ venv.bak/
 # Data and training outputs
 data/
 output/
+output
 events.out.tfevents.*
 tools/slurm_logs/
-work_log
+/slurm_logs
 *.pth
