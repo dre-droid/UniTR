@@ -19,9 +19,10 @@ mkdir -p slurm_logs
 # We run single-GPU finetuning natively
 srun --kill-on-bad-exit=1 \
     python -u train.py \
-    --extra_tag v1.1_finetune_mini \
+    --extra_tag v1_opt \
     --cfg_file cfgs/nuscenes_models/unitr_mini.yaml \
     --pretrained_model ../checkpoints/v1/latest_model.pth \
-    --batch_size 3 \
+    --batch_size 4 \
     --epochs 10 \
-    --workers 8
+    --workers 8 \
+    --use_amp
