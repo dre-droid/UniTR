@@ -252,6 +252,13 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
 
             # save trained model
             trained_epoch = cur_epoch + 1
+
+            # Visualization Hook (Every Epoch)
+            if cfg.get('VISUALIZATION', None) is not None and rank == 0:
+                from .ssl_vis_utils import visualize_ssl
+                logger.info(f'Generating SSL visualizations for epoch {trained_epoch}...')
+                visualize_ssl(model, train_loader, cfg, trained_epoch, ckpt_save_dir.parent, logger)
+
             if trained_epoch % ckpt_save_interval == 0 and rank == 0:
 
                 ckpt_list = glob.glob(str(ckpt_save_dir / 'checkpoint_epoch_*.pth'))
