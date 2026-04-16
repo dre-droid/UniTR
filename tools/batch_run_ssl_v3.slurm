@@ -19,6 +19,6 @@ srun --kill-on-bad-exit=1 \
     python -u train_ssl.py \
     --extra_tag full_dataset_v3_fusion \
     --cfg_file cfgs/nuscenes_models/unitr_ibot_fusion.yaml \
-    --batch_size 4 \
-    --epochs 25 \
+    --batch_size 8 \
+    --epochs 50 \
     --workers 8
