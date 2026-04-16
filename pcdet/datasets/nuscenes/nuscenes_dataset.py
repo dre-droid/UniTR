@@ -15,7 +15,7 @@ import cv2
 
 class NuScenesDataset(DatasetTemplate):
     def __init__(self, dataset_cfg, class_names, training=True, root_path=None, logger=None):
-        root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH)) / dataset_cfg.VERSION
+        root_path = (root_path if root_path is not None else Path(dataset_cfg.DATA_PATH))
         super().__init__(
             dataset_cfg=dataset_cfg, class_names=class_names, training=training, root_path=root_path, logger=logger
         )
@@ -38,8 +38,10 @@ class NuScenesDataset(DatasetTemplate):
         if self.training and self.dataset_cfg.get('BALANCED_RESAMPLING', False):
             self.infos = self.balanced_infos_resampling(self.infos)
 
+
     def include_nuscenes_data(self, mode):
-        self.logger.info('Loading NuScenes dataset')
+        if self.logger is not None:
+            self.logger.info('Loading NuScenes dataset')
         nuscenes_infos = []
 
         for info_path in self.dataset_cfg.INFO_PATH[mode]:
@@ -79,7 +81,8 @@ class NuScenesDataset(DatasetTemplate):
                 nuscenes_infos.extend(infos)
 
         self.infos.extend(nuscenes_infos)
-        self.logger.info('Total samples for NuScenes dataset: %d' % (len(nuscenes_infos)))
+        if self.logger is not None:
+            self.logger.info('Total samples for NuScenes dataset: %d' % (len(nuscenes_infos)))
 
     def balanced_infos_resampling(self, infos):
         """
@@ -318,7 +321,7 @@ class NuScenesDataset(DatasetTemplate):
         import json
         from nuscenes.nuscenes import NuScenes
         from . import nuscenes_utils
-        nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path.parent), verbose=True)
+        nusc = NuScenes(version=self.dataset_cfg.VERSION, dataroot=str(self.root_path), verbose=True)
         nusc_annos = nuscenes_utils.transform_det_annos_to_nusc_annos(det_annos, nusc)
         nusc_annos['meta'] = {
             'use_camera': False,
