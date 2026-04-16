@@ -18,5 +18,5 @@ srun --kill-on-bad-exit=1 \
     --extra_tag baseline_finetune_mini \
     --cfg_file cfgs/nuscenes_models/unitr_mini.yaml \
     --batch_size 3 \
-    --epochs 10 \
+    --epochs 20 \
     --workers 8

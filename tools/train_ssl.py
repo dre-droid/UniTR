@@ -125,6 +125,7 @@ def main():
         args.batch_size = args.batch_size // total_gpus
 
     args.epochs = cfg.OPTIMIZATION.NUM_EPOCHS if args.epochs is None else args.epochs
+    args.ckpt_save_interval = cfg.OPTIMIZATION.get('CKPT_SAVE_INTERVAL', 1) if args.ckpt_save_interval == 1 else args.ckpt_save_interval
 
     if args.fix_random_seed:
         common_utils.set_random_seed(666 + cfg.LOCAL_RANK)

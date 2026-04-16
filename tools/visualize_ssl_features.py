@@ -181,13 +181,12 @@ def extract_features_with_image_patches(model, batch_dict, logger):
     voxel_num = voxel_features.shape[0]
 
     # Step 2: Teacher backbone (unmasked, clean features)
-    teacher_batch = {
-        'batch_size': batch_dict['batch_size'],
-        'camera_imgs': batch_dict['camera_imgs'],
+    teacher_batch = copy.copy(batch_dict)
+    teacher_batch.update({
         'voxel_features': voxel_features,
         'voxel_coords': voxel_coords,
         'voxel_num': voxel_num,
-    }
+    })
 
     # Run full backbone forward
     teacher_out = backbone(teacher_batch)

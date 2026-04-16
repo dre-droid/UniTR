@@ -37,14 +37,19 @@ spconv-cu121      # Required for 3D Sparse Convolutions on Lovelace
 # Then run: pip install torch-scatter -f https://data.pyg.org/whl/torch-[VERSION]+cu121.html
 
 # 5. Fix for compilation errors
-#export CUDA_HOME=$CONDA_PREFIX
-#export CC=$CONDA_PREFIX/bin/gcc
-#export CXX=$CONDA_PREFIX/bin/g++
-#export MAX_JOBS=1
+    # only if using conda gcc
+    #export CC=$CONDA_PREFIX/bin/gcc
+    #export CXX=$CONDA_PREFIX/bin/g++
+export CUDA_HOME=$CONDA_PREFIX
+export MAX_JOBS=1
 export CPATH=$CONDA_PREFIX/include:$CPATH
 
 # Create a physical link so the compiler CANNOT miss the headers
 # This bypasses the need for the compiler to "find" the basement folder.
 ln -sf $CONDA_PREFIX/targets/x86_64-linux/include/curand_kernel.h $CONDA_PREFIX/include/curand_kernel.h
 ln -sf $CONDA_PREFIX/targets/x86_64-linux/include/curand_uniform.h $CONDA_PREFIX/include/curand_uniform.h
+# or this i guess
+# export CPATH=$CONDA_PREFIX/targets/x86_64-linux/include:$CONDA_PREFIX/include:$CPATH
 
+# 6. Install UniTR -- do not run setup.py develop, it will build in isolation and not work
+pip install -v -e . --no-build-isolation

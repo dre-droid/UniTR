@@ -23,5 +23,5 @@ srun --kill-on-bad-exit=1 \
     --cfg_file cfgs/nuscenes_models/unitr_mini.yaml \
     --pretrained_model ../checkpoints/v2/latest_model.pth \
     --batch_size 3 \
-    --epochs 10 \
+    --epochs 20 \
     --workers 8

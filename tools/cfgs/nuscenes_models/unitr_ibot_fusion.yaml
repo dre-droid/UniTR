@@ -141,7 +141,8 @@ MODEL:
 
 OPTIMIZATION:
     BATCH_SIZE_PER_GPU: 1
-    NUM_EPOCHS: 25
+    NUM_EPOCHS: 50
+    CKPT_SAVE_INTERVAL: 5
 
     OPTIMIZER: adam_onecycle
     LR: 0.0001
@@ -161,3 +162,8 @@ OPTIMIZATION:
     GRAD_NORM_CLIP: 3.0
     LOSS_SCALE_FP16: 32
     USE_AMP: True
+
+VISUALIZATION:
+    SAMPLE_IDX: 5
+    MODES: ['bev_pca', 'camera_pca', 'bev_similarity']
+    QUERY_XY: [0.0, 0.0]
