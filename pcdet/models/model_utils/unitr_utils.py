@@ -58,14 +58,14 @@ def map_points(points, lidar2image, image_aug_matrix, batch_size, image_shape):
 
     num_view = lidar2image.shape[1]
     points = torch.cat((points, torch.ones_like(points[..., :1])), -1)
-    # map points from lidar to (aug) image space
-    points = points.unsqueeze(0).unsqueeze(0).repeat(
-        batch_size, num_view, 1, 1, 1).unsqueeze(-1)
+    
+    # Avoid allocating 10GB of repeated tensors. Use .expand() and native broadcasting instead.
+    points = points.unsqueeze(0).unsqueeze(0).unsqueeze(-1).expand(
+        batch_size, num_view, -1, -1, -1, -1)
+    
     grid_num, sample_num = points.shape[2:4]
-    lidar2image = lidar2image.view(batch_size, num_view, 1, 1, 4, 4).repeat(
-        1, 1, grid_num, sample_num, 1, 1)
-    image_aug_matrix = image_aug_matrix.view(
-        batch_size, num_view, 1, 1, 4, 4).repeat(1, 1, grid_num, sample_num, 1, 1)
+    lidar2image = lidar2image.view(batch_size, num_view, 1, 1, 4, 4)
+    image_aug_matrix = image_aug_matrix.view(batch_size, num_view, 1, 1, 4, 4)
     points_2d = torch.matmul(lidar2image, points).squeeze(-1)
 
     # recover image augmentation
