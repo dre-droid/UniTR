@@ -147,13 +147,10 @@ class iBOTUniTR(nn.Module):
         masked_voxel_features, voxel_mask = self.voxel_masker(voxel_features)
 
         # ---- Step 3: Student forward (masked) ----
-        student_batch = {
-            'batch_size': batch_dict['batch_size'],
-            'camera_imgs': batch_dict['camera_imgs'],
+        student_batch = copy.copy(batch_dict)
+        student_batch.update({
             'voxel_features': masked_voxel_features,
-            'voxel_coords': voxel_coords,
-            'voxel_num': voxel_num,
-        }
+        })
         student_out = self.student_backbone(student_batch, patch_masker=self.patch_masker)
         student_voxel_out = student_out['pillar_features']  # (N, 128)
         student_patch_out = student_out['patch_features']   # (P, 128)
@@ -161,13 +158,10 @@ class iBOTUniTR(nn.Module):
 
         # ---- Step 4: Teacher forward (unmasked) ----
         with torch.no_grad():
-            teacher_batch = {
-                'batch_size': batch_dict['batch_size'],
-                'camera_imgs': batch_dict['camera_imgs'],
+            teacher_batch = copy.copy(batch_dict)
+            teacher_batch.update({
                 'voxel_features': voxel_features,  # unmasked
-                'voxel_coords': voxel_coords,
-                'voxel_num': voxel_num,
-            }
+            })
             teacher_out = self.teacher_backbone(teacher_batch)
             teacher_voxel_out = teacher_out['pillar_features']  # (N, 128)
             teacher_patch_out = teacher_out['patch_features']   # (P, 128)

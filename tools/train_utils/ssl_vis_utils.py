@@ -49,13 +49,12 @@ def extract_vis_features(model, batch_dict):
     voxel_coords = vfe_batch['voxel_coords']
     voxel_num = voxel_features.shape[0]
 
-    teacher_batch = {
-        'batch_size': vfe_batch['batch_size'],
-        'camera_imgs': vfe_batch['camera_imgs'],
+    teacher_batch = batch_dict.copy()
+    teacher_batch.update({
         'voxel_features': voxel_features,
         'voxel_coords': voxel_coords,
         'voxel_num': voxel_num,
-    }
+    })
 
     teacher_out = backbone(teacher_batch)
     backbone.out_indices = old_indices
@@ -86,8 +85,15 @@ def visualize_ssl(model, train_loader, cfg, epoch, output_dir, logger):
     dataset = train_loader.dataset
     if hasattr(dataset, 'dataset'): # handling wrapper
         dataset = dataset.dataset
-        
-    data_dict = dataset[sample_idx]
+    
+    # Disable augmentations for deterministic visualization
+    old_training = dataset.training
+    dataset.training = False
+    try:
+        data_dict = dataset[sample_idx]
+    finally:
+        dataset.training = old_training
+
     batch_dict = dataset.collate_batch([data_dict])
     
     from pcdet.models import load_data_to_gpu
