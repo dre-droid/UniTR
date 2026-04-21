@@ -130,7 +130,7 @@ MODEL:
 
     SSL:
       MASK_RATIO_VOXEL: 0.4
-      MASK_RATIO_PATCH: 0.3
+      MASK_RATIO_PATCH: 0.4
       EMA_MOMENTUM_START: 0.996
       EMA_MOMENTUM_END: 1.0
       PROJ_HIDDEN_DIM: 512
@@ -140,23 +140,23 @@ MODEL:
       CENTER_MOMENTUM: 0.9
 
 OPTIMIZATION:
-    BATCH_SIZE_PER_GPU: 1
+    BATCH_SIZE_PER_GPU: 4
     NUM_EPOCHS: 50
     CKPT_SAVE_INTERVAL: 5
 
-    OPTIMIZER: adam_onecycle
+    OPTIMIZER: adam_cosineanneal
     LR: 0.0001
     WEIGHT_DECAY: 0.05
     MOMENTUM: 0.9
 
     MOMS: [0.95, 0.85]
     PCT_START: 0.4
-    DIV_FACTOR: 10
-    DECAY_STEP_LIST: [35, 45]
+    DIV_FACTOR: 10          # kept for compatibility, not used by cosineanneal
+    DECAY_STEP_LIST: [35, 45]  # kept for compatibility, not used by cosineanneal
     LR_DECAY: 0.1
     LR_CLIP: 0.0000001
 
-    LR_WARMUP: True
+    # Linear warmup for first WARMUP_EPOCH epochs, then cosine decay to LR*0.001
     WARMUP_EPOCH: 5
 
     GRAD_NORM_CLIP: 3.0

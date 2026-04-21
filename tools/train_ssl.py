@@ -83,7 +83,7 @@ def parse_config():
     parser.add_argument('--sync_bn', action='store_true', default=False)
     parser.add_argument('--fix_random_seed', action='store_true', default=False)
     parser.add_argument('--ckpt_save_interval', type=int, default=1)
-    parser.add_argument('--local_rank', type=int, default=0)
+    parser.add_argument('--local_rank', '--local-rank', type=int, default=0)
     parser.add_argument('--max_ckpt_save_num', type=int, default=10)
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER)
     parser.add_argument('--use_tqdm_to_record', action='store_true', default=False)

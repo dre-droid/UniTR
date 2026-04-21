@@ -24,8 +24,8 @@ from visualize_ssl_features import extract_features_with_image_patches, pca_to_r
 
 def main():
     parser = argparse.ArgumentParser(description='Play camera feeds for a nuScenes scene')
-    parser.add_argument('--cfg_file', type=str, default='tools/cfgs/nuscenes_models/unitr_ibot_fusion_test.yaml')
-    parser.add_argument('--checkpoint', type=str, default='output/nuscenes_models/unitr_ibot_fusion/full_dataset_v3_fusion/ckpt/latest_model.pth')
+    parser.add_argument('--cfg_file', type=str, default='cfgs/nuscenes_models/unitr_ibot_fusion.yaml')
+    parser.add_argument('--checkpoint', type=str, default='output/nuscenes_models/unitr_ibot_fusion/full_dataset_v4_fusion/ckpt/latest_model.pth')
     parser.add_argument('--sample_idx', type=int, default=5)
     parser.add_argument('--split', type=str, default='test', choices=['train', 'test', 'val'])
     parser.add_argument('--output_dir', type=str, default='output/visualizations/scene_play')

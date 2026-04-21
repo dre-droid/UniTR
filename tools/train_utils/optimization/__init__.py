@@ -53,8 +53,14 @@ def build_scheduler(optimizer, total_iters_each_epoch, total_epochs, last_epoch,
             optimizer, total_steps, optim_cfg.LR, list(optim_cfg.MOMS), optim_cfg.DIV_FACTOR, optim_cfg.PCT_START
         )
     elif optim_cfg.OPTIMIZER == 'adam_cosineanneal':
+        # Compute warmup_iter from WARMUP_EPOCH if WARMUP_ITER is not explicitly set.
+        # This makes it GPU-count-agnostic: total_iters_each_epoch already reflects
+        # the per-process dataset size (smaller with DDP), so the warmup duration
+        # in epochs is always correct regardless of GPU count.
+        warmup_iter = optim_cfg.get('WARMUP_ITER',
+                                    optim_cfg.get('WARMUP_EPOCH', 1) * total_iters_each_epoch)
         lr_scheduler = CosineAnnealing(
-            optimizer, total_steps, total_epochs, optim_cfg.LR, list(optim_cfg.MOMS), optim_cfg.PCT_START, optim_cfg.WARMUP_ITER
+            optimizer, total_steps, total_epochs, optim_cfg.LR, list(optim_cfg.MOMS), optim_cfg.PCT_START, warmup_iter
         )
     else:
         lr_scheduler = lr_sched.LambdaLR(optimizer, lr_lbmd, last_epoch=last_epoch)
