@@ -1,0 +1,8 @@
+Studied UniTR architecture in more depth: it has a VFE to tokenize lidar points into voxels, 
+and a patch embed to tokenize image patches into tokens. It optionally has lidar2image and image2lidar 
+projections to fuse the inputs early (we're not using them but we fkin should, otherwise there's not cross attention).
+
+The forward basically has sequential blocks (in unitr.yaml 0: self attention, 1-2 lidar2iamge, 3 image2lidar)
+
+Today we added patch masking to the image branch (since it wasn't implemented in the first run since
+it required changing the UniTR class). 

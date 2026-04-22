@@ -65,5 +65,4 @@ output
 events.out.tfevents.*
 tools/slurm_logs/
 /slurm_logs
-*.pth
 slurm_logs/

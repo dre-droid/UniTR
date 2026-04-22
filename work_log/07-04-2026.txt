@@ -1,0 +1,9 @@
+The v2 training run ended, now the camera features look to improve qualitatively from the
+visualizations on sample 5. I've now run a v3 version on the heavy node with the
+fusion module enables (will likely complete in 3 days), so we'll see with that.
+
+I've also fine tuned v1 and v2 and they're running now.
+
+TODO: run v3 for more than 25 epochs (possibly also v2 and v1 as better ablations) -
+more towards 100-300 epochs to match iBOT and SSL papers but idk, definately should
+implement some kind of patience early stopping.
