@@ -222,28 +222,33 @@ def extract_features_with_image_patches(model, batch_dict, logger):
     return result
 
 
-def pca_to_rgb(features, n_components=3, pca_obj=None):
+def pca_to_rgb(features, n_components=3, pca_obj=None, start_component=0):
     """
     Reduce N-dimensional features to 3-component RGB via PCA.
     
     Args:
         features: (N, D) numpy array
-        n_components: Number of components (default 3 for RGB)
+        n_components: Number of components to return (default 3 for RGB)
         pca_obj: Optional pre-fitted sklearn PCA object for consistency
+        start_component: The index of the first component to use (e.g., 1 to skip the first gradient)
     Returns:
-        rgb: (N, 3) numpy array in [0, 1]
+        rgb: (N, n_components) numpy array in [0, 1]
         pca_obj: The fitted/used PCA object
     """
-    if features.shape[0] < n_components:
-        return np.zeros((features.shape[0], 3)), None
+    total_needed = n_components + start_component
+    if features.shape[0] < total_needed:
+        return np.zeros((features.shape[0], n_components)), None
     
     if pca_obj is None:
-        pca_obj = PCA(n_components=n_components)
-        rgb = pca_obj.fit_transform(features)
+        pca_obj = PCA(n_components=total_needed)
+        rgb_full = pca_obj.fit_transform(features)
     else:
-        rgb = pca_obj.transform(features)
+        rgb_full = pca_obj.transform(features)
     
-    # Normalize each component to [0, 1]
+    # Select requested components
+    rgb = rgb_full[:, start_component:total_needed]
+    
+    # Normalize each selected component to [0, 1]
     for i in range(n_components):
         col = rgb[:, i]
         # Use robust scaling (clipping outliers)

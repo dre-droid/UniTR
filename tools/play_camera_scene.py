@@ -30,6 +30,7 @@ def main():
     parser.add_argument('--split', type=str, default='test', choices=['train', 'test', 'val'])
     parser.add_argument('--output_dir', type=str, default='output/visualizations/scene_play')
     parser.add_argument('--view_mode', type=str, default='camera', choices=['camera', 'bev'])
+    parser.add_argument('--pca_start', type=int, default=1, help='Starting PCA component index (e.g. 1 to skip spatial gradient)')
     args = parser.parse_args()
 
     # Use split-specific output folder
@@ -107,7 +108,7 @@ def main():
             all_features.append(f)
     
     global_features = np.concatenate(all_features, axis=0)
-    _, pca_obj = pca_to_rgb(global_features)
+    _, pca_obj = pca_to_rgb(global_features, start_component=args.pca_start)
 
     # 4. Generate frames
     frames = []
@@ -126,6 +127,7 @@ def main():
         if args.view_mode == 'camera':
             patch_feats = res['patch_features'] # (6, 128, 32, 88)
             imgs = res['camera_imgs'][0]        # (6, 3, 256, 704)
+            _, _, pH, pW = patch_feats.shape
             
             # Grid plot 3x2
             fig, axes = plt.subplots(3, 2, figsize=(15, 10), dpi=100)
@@ -134,8 +136,8 @@ def main():
             for cam_i in range(6):
                 # PCA for this camera
                 cam_feats = patch_feats[cam_i].transpose(1, 2, 0).reshape(-1, 128)
-                rgb_map, _ = pca_to_rgb(cam_feats, pca_obj=pca_obj)
-                rgb_map = rgb_map.reshape(32, 88, 3)
+                rgb_map, _ = pca_to_rgb(cam_feats, pca_obj=pca_obj, start_component=args.pca_start)
+                rgb_map = rgb_map.reshape(pH, pW, 3)
                 
                 # Upsample
                 rgb_upsampled = np.array(Image.fromarray((rgb_map * 255).astype(np.uint8)).resize((704, 256), Image.BILINEAR)) / 255.0
@@ -145,8 +147,8 @@ def main():
                 img = np.clip(img, 0, 1).transpose(1, 2, 0)
                 
                 # No Alpha Blend
-                # blended = img * 0.5 + rgb_upsampled * 0.5
-                blended = rgb_upsampled
+                blended = img
+                # blended = rgb_upsampled
                 blended = np.clip(blended, 0, 1)
                 
                 ax = axes[cam_i // 2, cam_i % 2]
@@ -160,7 +162,7 @@ def main():
             pillar_features = res['pillar_features']
             pillar_coords = res['pillar_coords']
             
-            rgb_b0, _ = pca_to_rgb(pillar_features, pca_obj=pca_obj)
+            rgb_b0, _ = pca_to_rgb(pillar_features, pca_obj=pca_obj, start_component=args.pca_start)
             
             grid_h, grid_w = 360, 360
             bev_image = np.ones((grid_h, grid_w, 3), dtype=np.float32) * 0.15
