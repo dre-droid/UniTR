@@ -29,8 +29,8 @@ def main():
     parser.add_argument('--sample_idx', type=int, default=5)
     parser.add_argument('--split', type=str, default='test', choices=['train', 'test', 'val'])
     parser.add_argument('--output_dir', type=str, default='output/visualizations/scene_play')
-    parser.add_argument('--view_mode', type=str, default='camera', choices=['camera', 'bev'])
-    parser.add_argument('--pca_start', type=int, default=1, help='Starting PCA component index (e.g. 1 to skip spatial gradient)')
+    parser.add_argument('--view_mode', type=str, default='camera', choices=['camera', 'bev', '3d'])
+    parser.add_argument('--pca_start', type=int, default=0, help='Starting PCA component index (e.g. 1 to skip spatial gradient)')
     args = parser.parse_args()
 
     # Use split-specific output folder
@@ -147,8 +147,7 @@ def main():
                 img = np.clip(img, 0, 1).transpose(1, 2, 0)
                 
                 # No Alpha Blend
-                blended = img
-                # blended = rgb_upsampled
+                blended = rgb_upsampled
                 blended = np.clip(blended, 0, 1)
                 
                 ax = axes[cam_i // 2, cam_i % 2]
@@ -158,7 +157,7 @@ def main():
 
             plt.suptitle(f"Scene: {scene['name']} | Sample: {i}", fontsize=16, color='white', y=0.98)
             fig.patch.set_facecolor('#1a1a2e')
-        else:
+        elif args.view_mode == 'bev':
             pillar_features = res['pillar_features']
             pillar_coords = res['pillar_coords']
             
@@ -182,6 +181,51 @@ def main():
             fig, ax = plt.subplots(1, 1, figsize=(10, 10), dpi=100)
             ax.imshow(bev_image, origin='lower')
             ax.set_title(f"Scene: {scene['name']} | Sample: {i} | BEV", fontsize=16, color='white', pad=20)
+            ax.axis('off')
+            fig.patch.set_facecolor('#1a1a2e')
+        elif args.view_mode == '3d':
+            pillar_features = res['pillar_features']
+            pillar_coords = res['pillar_coords']
+            
+            rgb, _ = pca_to_rgb(pillar_features, pca_obj=pca_obj, start_component=args.pca_start)
+            
+            mask_b0 = pillar_coords[:, 0] == 0
+            coords_b0 = pillar_coords[mask_b0]
+            rgb_b0 = rgb[mask_b0]
+            
+            x_world = (coords_b0[:, 3] * 0.3) - 54.0
+            y_world = (coords_b0[:, 2] * 0.3) - 54.0
+            z_world = np.zeros_like(x_world)
+            
+            cam_pos = np.array([-25, 0, 15]) 
+            look_at = np.array([10, 0, 0])
+            
+            points = np.stack([x_world, y_world, z_world], axis=1)
+            rel_points = points - cam_pos
+            
+            forward = (look_at - cam_pos)
+            forward = forward / np.linalg.norm(forward)
+            right = np.cross(np.array([0, 0, 1]), forward)
+            right = right / np.linalg.norm(right)
+            up = np.cross(forward, right)
+            
+            x_cam = np.sum(rel_points * right, axis=1)
+            y_cam = np.sum(rel_points * up, axis=1)
+            z_cam = np.sum(rel_points * forward, axis=1)
+            
+            mask = z_cam > 1.0
+            x_cam, y_cam, z_cam, rgb_b0 = x_cam[mask], y_cam[mask], z_cam[mask], rgb_b0[mask]
+            
+            focal = 500
+            u = (x_cam * focal / z_cam)
+            v = (y_cam * focal / z_cam)
+            
+            fig, ax = plt.subplots(1, 1, figsize=(12, 8), dpi=100)
+            ax.scatter(u, -v, c=rgb_b0, s=2, edgecolors='none', alpha=0.8) # -v to flip y for screen coords
+            
+            ax.set_xlim(-600, 600)
+            ax.set_ylim(-400, 400)
+            ax.set_title(f"Scene: {scene['name']} | Sample: {i} | Concerto 3D View", fontsize=16, color='white', pad=20)
             ax.axis('off')
             fig.patch.set_facecolor('#1a1a2e')
         

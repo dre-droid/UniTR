@@ -78,6 +78,7 @@ def parse_config():
     parser.add_argument('--workers', type=int, default=4, help='dataloader workers')
     parser.add_argument('--extra_tag', type=str, default='default', help='experiment tag')
     parser.add_argument('--ckpt', type=str, default=None, help='checkpoint to resume from')
+    parser.add_argument('--pretrained_model', type=str, default=None, help='pretrained model to load')
     parser.add_argument('--launcher', choices=['none', 'pytorch', 'slurm'], default='none')
     parser.add_argument('--tcp_port', type=int, default=18888)
     parser.add_argument('--sync_bn', action='store_true', default=False)
@@ -192,6 +193,10 @@ def main():
             args.ckpt, to_cpu=dist_train, optimizer=optimizer, logger=logger
         )
         last_epoch = start_epoch + 1
+    elif args.pretrained_model is not None:
+        model.load_params_from_file(
+            filename=args.pretrained_model, to_cpu=dist_train, logger=logger
+        )
     else:
         ckpt_list = glob.glob(str(ckpt_dir / '*.pth'))
         if len(ckpt_list) > 0:
