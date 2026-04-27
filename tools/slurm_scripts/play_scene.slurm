@@ -22,14 +22,15 @@ squashfuse /mnt/proj1/eu-25-122/andreaam/nuscenes.sqsh /home/it4i-andreaam/UniTR
 
 # 3. Launch Visualization
 PYTHON=/mnt/proj1/eu-25-122/andreaam/.conda/envs/unitr/bin/python
-OUT_DIR="/home/it4i-andreaam/UniTR/output/visualizations/scene_play/v4_epoch10_20pct"
+OUT_DIR="/home/it4i-andreaam/UniTR/output/visualizations/scene_play/v4_epoch91_82pct"
 
 # Run BEV
 $PYTHON play_camera_scene.py \
     --sample_idx 5 \
     --split train \
     --view_mode bev \
-    --checkpoint /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion/full_dataset_v4_fusion/ckpt/latest_model.pth \
+    --pca_start 0 \
+    --checkpoint /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion_ph2/v4_ph2/ckpt/latest_model.pth \
     --output_dir $OUT_DIR
 
 # Run Camera
@@ -37,5 +38,5 @@ $PYTHON play_camera_scene.py \
     --sample_idx 5 \
     --split train \
     --view_mode camera \
-    --checkpoint /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion/full_dataset_v4_fusion/ckpt/latest_model.pth \
+    --checkpoint /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion_ph2/v4_ph2/ckpt/latest_model.pth \
     --output_dir $OUT_DIR

@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=unitr_ssl_fusion
+#SBATCH --job-name=unitr_ft_1pct
 #SBATCH --account=eu-25-122
-#SBATCH --partition=qgpu
+#SBATCH --partition=qgpu_free
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus-per-node=4
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=32
-#SBATCH --output=slurm_logs/ssl_fusion_%j.out
-#SBATCH --error=slurm_logs/ssl_fusion_%j.err
+#SBATCH --output=slurm_logs/ft_1pct_%j.out
+#SBATCH --error=slurm_logs/ft_1pct_%j.err
 
 # Set environment
 module load Anaconda3
@@ -33,11 +33,12 @@ fi
 PYTHON=/mnt/proj1/eu-25-122/andreaam/.conda/envs/unitr/bin/python
 PORT=$((29500 + $RANDOM % 100))
 
-$PYTHON -m torch.distributed.launch --nproc_per_node=2 --master_port=$PORT \
-    train_ssl.py \
+# Run the downstream training script
+$PYTHON -m torch.distributed.launch --nproc_per_node=4 --master_port=$PORT \
+    train.py \
     --launcher pytorch \
-    --extra_tag full_dataset_v4_fusion \
-    --cfg_file cfgs/nuscenes_models/unitr_ibot_fusion.yaml \
-    --ckpt /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion/full_dataset_v4_fusion/ckpt/latest_model.pth \
-    --epochs 50 \
+    --extra_tag finetune_1pct_same_lr \
+    --cfg_file cfgs/nuscenes_models/unitr_1percent.yaml \
+    --pretrained_model /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion/full_dataset_v4_fusion/ckpt/checkpoint_epoch_50.pth \
+    --epochs 40 \
     --workers 4

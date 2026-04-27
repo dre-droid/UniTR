@@ -3,9 +3,9 @@
 #SBATCH --account=eu-25-122
 #SBATCH --partition=qgpu
 #SBATCH --nodes=1
-#SBATCH --gpus-per-node=2
+#SBATCH --gpus-per-node=8
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=128
 #SBATCH --output=slurm_logs/ssl_fusion_%j.out
 #SBATCH --error=slurm_logs/ssl_fusion_%j.err
 
@@ -33,11 +33,10 @@ fi
 PYTHON=/mnt/proj1/eu-25-122/andreaam/.conda/envs/unitr/bin/python
 PORT=$((29500 + $RANDOM % 100))
 
-$PYTHON -m torch.distributed.launch --nproc_per_node=2 --master_port=$PORT \
+$PYTHON -m torch.distributed.launch --nproc_per_node=8 --master_port=$PORT \
     train_ssl.py \
     --launcher pytorch \
-    --extra_tag full_dataset_v4_fusion \
-    --cfg_file cfgs/nuscenes_models/unitr_ibot_fusion.yaml \
-    --ckpt /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion/full_dataset_v4_fusion/ckpt/latest_model.pth \
+    --extra_tag full_dataset_v5_mask \
+    --cfg_file cfgs/nuscenes_models/unitr_ibot_fusion_v5_high_mask.yaml \
     --epochs 50 \
     --workers 4
