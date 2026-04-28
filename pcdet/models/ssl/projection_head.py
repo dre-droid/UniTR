@@ -105,7 +105,4 @@ class iBOTLoss(nn.Module):
         # Cross-entropy loss
         loss = -torch.sum(t_probs * s_log_probs, dim=-1).mean()
 
-        # Update center with full (unmasked) teacher output
-        self.update_center(teacher_output)
-
         return loss
