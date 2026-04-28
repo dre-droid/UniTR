@@ -60,27 +60,33 @@ class iBOTUniTR(nn.Module):
         for p in self.teacher_backbone.parameters():
             p.requires_grad = False
 
-        # ---- Projection heads ----
+        # ---- Projection heads (separate per modality) ----
         d_model = model_cfg.MM_BACKBONE.d_model[-1]  # 128
         proj_hidden = self.ssl_cfg.PROJ_HIDDEN_DIM
         proj_out = self.ssl_cfg.PROJ_OUT_DIM
 
-        self.student_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
-        self.teacher_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
-        for p in self.teacher_proj.parameters():
+        self.student_voxel_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
+        self.student_patch_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
+        self.teacher_voxel_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
+        self.teacher_patch_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
+        for p in self.teacher_voxel_proj.parameters():
+            p.requires_grad = False
+        for p in self.teacher_patch_proj.parameters():
             p.requires_grad = False
 
         # ---- Maskers ----
         self.voxel_masker = VoxelMasker(d_model, self.ssl_cfg.MASK_RATIO_VOXEL)
         self.patch_masker = PatchMasker(d_model, self.ssl_cfg.MASK_RATIO_PATCH)
 
-        # ---- Loss ----
-        self.loss_fn = iBOTLoss(
+        # ---- Loss (separate per modality so centers don't cross-contaminate) ----
+        loss_kwargs = dict(
             out_dim=proj_out,
             teacher_temp=self.ssl_cfg.TEACHER_TEMP,
             student_temp=self.ssl_cfg.STUDENT_TEMP,
             center_momentum=self.ssl_cfg.CENTER_MOMENTUM,
         )
+        self.loss_fn_voxel = iBOTLoss(**loss_kwargs)
+        self.loss_fn_patch  = iBOTLoss(**loss_kwargs)
 
         # ---- EMA state ----
         self.ema_momentum_start = self.ssl_cfg.EMA_MOMENTUM_START
@@ -101,8 +107,11 @@ class iBOTUniTR(nn.Module):
         for t_param, s_param in zip(self.teacher_backbone.parameters(),
                                      self.student_backbone.parameters()):
             t_param.data.copy_(s_param.data)
-        for t_param, s_param in zip(self.teacher_proj.parameters(),
-                                     self.student_proj.parameters()):
+        for t_param, s_param in zip(self.teacher_voxel_proj.parameters(),
+                                     self.student_voxel_proj.parameters()):
+            t_param.data.copy_(s_param.data)
+        for t_param, s_param in zip(self.teacher_patch_proj.parameters(),
+                                     self.student_patch_proj.parameters()):
             t_param.data.copy_(s_param.data)
 
     @torch.no_grad()
@@ -113,8 +122,11 @@ class iBOTUniTR(nn.Module):
         for t_param, s_param in zip(self.teacher_backbone.parameters(),
                                      self.student_backbone.parameters()):
             t_param.data.mul_(momentum).add_(s_param.data, alpha=1.0 - momentum)
-        for t_param, s_param in zip(self.teacher_proj.parameters(),
-                                     self.student_proj.parameters()):
+        for t_param, s_param in zip(self.teacher_voxel_proj.parameters(),
+                                     self.student_voxel_proj.parameters()):
+            t_param.data.mul_(momentum).add_(s_param.data, alpha=1.0 - momentum)
+        for t_param, s_param in zip(self.teacher_patch_proj.parameters(),
+                                     self.student_patch_proj.parameters()):
             t_param.data.mul_(momentum).add_(s_param.data, alpha=1.0 - momentum)
 
     def _get_momentum(self, total_steps: int) -> float:
@@ -168,18 +180,18 @@ class iBOTUniTR(nn.Module):
 
         # ---- Step 5: Project ----
         # Project voxels
-        student_voxel_proj = self.student_proj(student_voxel_out)   # (N, proj_out)
+        student_voxel_proj = self.student_voxel_proj(student_voxel_out)   # (N, proj_out)
         with torch.no_grad():
-            teacher_voxel_proj = self.teacher_proj(teacher_voxel_out)  # (N, proj_out)
+            teacher_voxel_proj = self.teacher_voxel_proj(teacher_voxel_out)  # (N, proj_out)
 
         # Project patches
-        student_patch_proj = self.student_proj(student_patch_out)   # (P, proj_out)
+        student_patch_proj = self.student_patch_proj(student_patch_out)   # (P, proj_out)
         with torch.no_grad():
-            teacher_patch_proj = self.teacher_proj(teacher_patch_out)  # (P, proj_out)
+            teacher_patch_proj = self.teacher_patch_proj(teacher_patch_out)  # (P, proj_out)
 
         # ---- Step 6: Compute L_MIM loss on masked positions ----
-        loss_voxel = self.loss_fn(student_voxel_proj, teacher_voxel_proj, voxel_mask)
-        loss_patch = self.loss_fn(student_patch_proj, teacher_patch_proj, patch_mask)
+        loss_voxel = self.loss_fn_voxel(student_voxel_proj, teacher_voxel_proj, voxel_mask)
+        loss_patch = self.loss_fn_patch(student_patch_proj, teacher_patch_proj, patch_mask)
 
         # ---- Total loss ----
         loss = loss_voxel + loss_patch
