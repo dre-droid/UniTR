@@ -37,9 +37,9 @@ class iBOTUniTR(nn.Module):
         self.dataset = dataset
         self.ssl_cfg = model_cfg.SSL
 
-        # ---- Build shared VFE ----
+        # ---- Build VFE (Student & Teacher) ----
         vfe_cfg = model_cfg.VFE
-        self.vfe = vfe.__all__[vfe_cfg.NAME](
+        self.student_vfe = vfe.__all__[vfe_cfg.NAME](
             model_cfg=vfe_cfg,
             num_point_features=dataset.point_feature_encoder.num_point_features,
             point_cloud_range=dataset.point_cloud_range,
@@ -47,6 +47,16 @@ class iBOTUniTR(nn.Module):
             grid_size=dataset.grid_size,
             depth_downsample_factor=dataset.depth_downsample_factor,
         )
+        self.teacher_vfe = vfe.__all__[vfe_cfg.NAME](
+            model_cfg=vfe_cfg,
+            num_point_features=dataset.point_feature_encoder.num_point_features,
+            point_cloud_range=dataset.point_cloud_range,
+            voxel_size=dataset.voxel_size,
+            grid_size=dataset.grid_size,
+            depth_downsample_factor=dataset.depth_downsample_factor,
+        )
+        for p in self.teacher_vfe.parameters():
+            p.requires_grad = False
 
         # ---- Build UniTR backbone (student) ----
         mm_cfg = copy.deepcopy(model_cfg.MM_BACKBONE)
@@ -98,6 +108,9 @@ class iBOTUniTR(nn.Module):
     @torch.no_grad()
     def _copy_student_to_teacher(self):
         """Initialize teacher weights as exact copy of student."""
+        for t_param, s_param in zip(self.teacher_vfe.parameters(),
+                                     self.student_vfe.parameters()):
+            t_param.data.copy_(s_param.data)
         for t_param, s_param in zip(self.teacher_backbone.parameters(),
                                      self.student_backbone.parameters()):
             t_param.data.copy_(s_param.data)
@@ -110,6 +123,9 @@ class iBOTUniTR(nn.Module):
         """EMA update of teacher from student weights."""
         momentum = self._get_momentum(total_steps)
 
+        for t_param, s_param in zip(self.teacher_vfe.parameters(),
+                                     self.student_vfe.parameters()):
+            t_param.data.mul_(momentum).add_(s_param.data, alpha=1.0 - momentum)
         for t_param, s_param in zip(self.teacher_backbone.parameters(),
                                      self.student_backbone.parameters()):
             t_param.data.mul_(momentum).add_(s_param.data, alpha=1.0 - momentum)
@@ -137,17 +153,20 @@ class iBOTUniTR(nn.Module):
             tb_dict: tensorboard logging dict
             disp_dict: display dict
         """
-        # ---- Step 1: Shared VFE (points → voxel features) ----
-        batch_dict = self.vfe(batch_dict)
-        voxel_features = batch_dict['voxel_features']       # (N, 128)
-        voxel_coords = batch_dict['voxel_coords']           # (N, 4)
-        voxel_num = voxel_features.shape[0]
+        # ---- Step 1: Independent VFE for Student and Teacher ----
+        student_batch = copy.copy(batch_dict)
+        student_batch = self.student_vfe(student_batch)
+        student_voxel_features = student_batch['voxel_features']       # (N, 128)
+        voxel_num = student_voxel_features.shape[0]
+
+        with torch.no_grad():
+            teacher_batch = copy.copy(batch_dict)
+            teacher_batch = self.teacher_vfe(teacher_batch)
 
         # ---- Step 2: Mask voxel features (student only) ----
-        masked_voxel_features, voxel_mask = self.voxel_masker(voxel_features)
+        masked_voxel_features, voxel_mask = self.voxel_masker(student_voxel_features)
 
         # ---- Step 3: Student forward (masked) ----
-        student_batch = copy.copy(batch_dict)
         student_batch.update({
             'voxel_features': masked_voxel_features,
         })
@@ -158,10 +177,6 @@ class iBOTUniTR(nn.Module):
 
         # ---- Step 4: Teacher forward (unmasked) ----
         with torch.no_grad():
-            teacher_batch = copy.copy(batch_dict)
-            teacher_batch.update({
-                'voxel_features': voxel_features,  # unmasked
-            })
             teacher_out = self.teacher_backbone(teacher_batch)
             teacher_voxel_out = teacher_out['pillar_features']  # (N, 128)
             teacher_patch_out = teacher_out['patch_features']   # (P, 128)
