@@ -44,7 +44,7 @@ def extract_vis_features(model, batch_dict):
         backbone.add_module('out_norm3', nn.LayerNorm(backbone.d_model[-1]).cuda())
     
     # Run VFE and Backbone
-    vfe_batch = model.vfe(batch_dict)
+    vfe_batch = model.teacher_vfe(batch_dict)
     voxel_features = vfe_batch['voxel_features']
     voxel_coords = vfe_batch['voxel_coords']
     voxel_num = voxel_features.shape[0]
