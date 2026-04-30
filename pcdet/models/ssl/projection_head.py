@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from pcdet.utils import commu_utils
+
 
 class iBOTProjectionHead(nn.Module):
     """
@@ -68,7 +70,18 @@ class iBOTLoss(nn.Module):
     @torch.no_grad()
     def update_center(self, teacher_output: torch.Tensor):
         """Update the running center with the mean of teacher outputs."""
-        batch_center = teacher_output.mean(dim=0, keepdim=True)
+        if torch.isnan(teacher_output).any() or torch.isinf(teacher_output).any():
+            return
+
+        batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
+        # Synchronize across all GPUs
+        world_size = commu_utils.get_world_size()
+        if world_size > 1:
+            torch.distributed.all_reduce(batch_center)
+            batch_center = batch_center / (len(teacher_output) * world_size)
+        else:
+            batch_center = batch_center / len(teacher_output)
+
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
     def forward(

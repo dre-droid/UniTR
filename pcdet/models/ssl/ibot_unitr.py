@@ -198,7 +198,7 @@ class iBOTUniTR(nn.Module):
 
         # ---- Step 7: Update centering (Unified for both modalities) ----
         with torch.no_grad():
-            all_teacher_proj = torch.cat([teacher_voxel_proj, teacher_patch_proj], dim=0)
+            all_teacher_proj = torch.cat([teacher_voxel_proj, teacher_patch_proj], dim=0).detach()
             self.loss_fn.update_center(all_teacher_proj)
 
         # ---- Total loss ----
