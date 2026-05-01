@@ -74,11 +74,15 @@ class iBOTLoss(nn.Module):
             return
 
         batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
-        # Synchronize across all GPUs
+        # Synchronize across all GPUs: sum the features AND the count independently
+        # to correctly handle variable-length inputs (e.g. voxel count differs per scene/GPU)
         world_size = commu_utils.get_world_size()
         if world_size > 1:
+            count = torch.tensor(len(teacher_output), dtype=batch_center.dtype,
+                                 device=batch_center.device)
             torch.distributed.all_reduce(batch_center)
-            batch_center = batch_center / (len(teacher_output) * world_size)
+            torch.distributed.all_reduce(count)
+            batch_center = batch_center / count
         else:
             batch_center = batch_center / len(teacher_output)
 
