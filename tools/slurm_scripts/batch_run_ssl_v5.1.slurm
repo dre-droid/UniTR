@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=128
 #SBATCH --output=slurm_logs/ssl_fusion_%j.out
 #SBATCH --error=slurm_logs/ssl_fusion_%j.err
-#SBATCH --time=6:00:00
+#SBATCH --time=10:00:00
 
 # Set environment
 module load Anaconda3
@@ -40,5 +40,6 @@ $PYTHON -m torch.distributed.launch --nproc_per_node=8 --master_port=$PORT \
     --launcher pytorch \
     --extra_tag full_dataset_v5.1_mask \
     --cfg_file cfgs/nuscenes_models/unitr_ibot_fusion_v5.1.yaml \
+    --ckpt /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion_v5.1/full_dataset_v5.1_mask/ckpt/latest_model.pth \
     --workers 8 \
     --sync_bn
