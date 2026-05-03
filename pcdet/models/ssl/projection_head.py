@@ -36,7 +36,8 @@ class iBOTProjectionHead(nn.Module):
             (N, out_dim) L2-normalized projected features.
         """
         out = self.mlp(x)
-        return F.normalize(out, dim=-1, p=2)
+        # Force FP32 for normalization to prevent FP16 overflow in sum(x^2)
+        return F.normalize(out.float(), dim=-1, p=2)
 
 
 class iBOTLoss(nn.Module):
@@ -68,6 +69,9 @@ class iBOTLoss(nn.Module):
         if torch.isnan(teacher_output).any() or torch.isinf(teacher_output).any():
             return
 
+        if len(teacher_output) == 0:
+            return
+
         # Force FP32 to prevent precision loss when summing many FP16 activations
         with torch.cuda.amp.autocast(enabled=False):
             teacher_output = teacher_output.float()
@@ -81,9 +85,10 @@ class iBOTLoss(nn.Module):
                                      device=batch_center.device)
                 torch.distributed.all_reduce(batch_center)
                 torch.distributed.all_reduce(count)
+                count = count.clamp(min=1.0)
                 batch_center = batch_center / count
             else:
-                batch_center = batch_center / len(teacher_output)
+                batch_center = batch_center / max(len(teacher_output), 1)
 
             self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
@@ -111,8 +116,11 @@ class iBOTLoss(nn.Module):
         s_out = student_output[mask]  # (M, out_dim)
         t_out = teacher_output[mask]  # (M, out_dim)
 
+        # Force FP32 to prevent overflows in softmax/exp and cross-entropy sum
+        t_out = t_out.detach().float()
+        s_out = s_out.float()
+
         # Teacher: centered + sharpened (no gradient)
-        t_out = t_out.detach()
         t_probs = F.softmax((t_out - self.center) / self.teacher_temp, dim=-1)
 
         # Student: sharpened
