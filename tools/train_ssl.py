@@ -14,11 +14,16 @@ import argparse
 import datetime
 import glob
 import os
+import warnings
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 from tensorboardX import SummaryWriter
+
+# Suppress specific deprecation warnings to clean up logs
+warnings.filterwarnings("ignore", message=".*custom_fwd.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*custom_bwd.*deprecated.*")
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
