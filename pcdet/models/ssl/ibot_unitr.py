@@ -97,25 +97,12 @@ class iBOTUniTR(nn.Module):
         # Global step counter for EMA schedule
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
 
-    def train(self, mode=True):
-        """Override to keep teacher modules permanently in eval mode.
-
-        Teacher BN stats are updated via EMA from student, not from forward passes.
-        Allowing teacher to run in train mode would pollute its BN running stats
-        with batch-level statistics independent of the EMA trajectory.
-        """
-        super().train(mode)
-        self.teacher_vfe.eval()
-        self.teacher_backbone.eval()
-        self.teacher_proj.eval()
-        return self
-
     def update_global_step(self):
         self.global_step += 1
 
     @torch.no_grad()
     def _copy_student_to_teacher(self):
-        """Initialize teacher weights and buffers as exact copy of student."""
+        """Initialize teacher weights as exact copy of student."""
         for t_param, s_param in zip(self.teacher_vfe.parameters(),
                                      self.student_vfe.parameters()):
             t_param.data.copy_(s_param.data)
@@ -126,28 +113,17 @@ class iBOTUniTR(nn.Module):
                                      self.student_proj.parameters()):
             t_param.data.copy_(s_param.data)
 
-        # Also copy buffers (BN running_mean, running_var, etc.)
-        self._copy_buffers(self.teacher_vfe, self.student_vfe)
-        self._copy_buffers(self.teacher_backbone, self.student_backbone)
-        self._copy_buffers(self.teacher_proj, self.student_proj)
-
-    @staticmethod
-    @torch.no_grad()
-    def _copy_buffers(target_module, source_module):
-        """Copy all buffers from source to target module."""
-        for t_buf, s_buf in zip(target_module.buffers(), source_module.buffers()):
-            t_buf.data.copy_(s_buf.data)
-
     @torch.no_grad()
     def update_teacher(self, total_steps: int):
-        """EMA update of teacher from student weights and buffers.
+        """EMA update of teacher parameters.
 
-        Runs in FP32 to prevent precision loss from autocast context.
+        Teacher stays in train mode (uses batch BN stats for normalization).
+        Only learned parameters (weights/biases) are EMA-updated.
+        BN running stats are naturally updated during the teacher's forward pass.
         """
         momentum = self._get_momentum(total_steps)
 
         with torch.cuda.amp.autocast(enabled=False):
-            # EMA update parameters
             for t_param, s_param in zip(self.teacher_vfe.parameters(),
                                          self.student_vfe.parameters()):
                 t_param.data.mul_(momentum).add_(s_param.data.float(), alpha=1.0 - momentum)
@@ -157,22 +133,6 @@ class iBOTUniTR(nn.Module):
             for t_param, s_param in zip(self.teacher_proj.parameters(),
                                          self.student_proj.parameters()):
                 t_param.data.mul_(momentum).add_(s_param.data.float(), alpha=1.0 - momentum)
-
-            # EMA update buffers (BN running_mean/running_var)
-            # Integer buffers (e.g. num_batches_tracked) are copied directly
-            self._ema_buffers(self.teacher_vfe, self.student_vfe, momentum)
-            self._ema_buffers(self.teacher_backbone, self.student_backbone, momentum)
-            self._ema_buffers(self.teacher_proj, self.student_proj, momentum)
-
-    @staticmethod
-    @torch.no_grad()
-    def _ema_buffers(target_module, source_module, momentum):
-        """EMA update floating-point buffers; direct copy for integer buffers."""
-        for t_buf, s_buf in zip(target_module.buffers(), source_module.buffers()):
-            if t_buf.dtype.is_floating_point:
-                t_buf.data.mul_(momentum).add_(s_buf.data.float(), alpha=1.0 - momentum)
-            else:
-                t_buf.data.copy_(s_buf.data)
 
     def _get_momentum(self, total_steps: int) -> float:
         """Cosine schedule for EMA momentum: starts low (0.996), anneals to 1.0."""
