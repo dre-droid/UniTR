@@ -54,16 +54,14 @@ def model_fn_ssl(total_steps=None):
 
         loss = ret_dict['loss'].mean()
 
-        # EMA teacher update
-        if hasattr(model, 'module'):
-            model.module.update_teacher(total_steps or 1)
-        else:
-            model.update_teacher(total_steps or 1)
-
-        if hasattr(model, 'update_global_step'):
-            model.update_global_step()
-        else:
-            model.module.update_global_step()
+        # EMA teacher update + global step — outside autocast for FP32 safety
+        with torch.cuda.amp.autocast(enabled=False):
+            if hasattr(model, 'module'):
+                model.module.update_teacher(total_steps or 1)
+                model.module.update_global_step()
+            else:
+                model.update_teacher(total_steps or 1)
+                model.update_global_step()
 
         return ModelReturn(loss, tb_dict, disp_dict)
 

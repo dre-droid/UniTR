@@ -27,11 +27,6 @@ class iBOTProjectionHead(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, out_dim),
         )
-        self.last_layer = nn.utils.parametrizations.weight_norm(
-            nn.Linear(hidden_dim, out_dim, bias=False)
-        )
-        # Override: use simple 3-layer MLP without separate last layer for simplicity
-        self.last_layer = None
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -73,20 +68,24 @@ class iBOTLoss(nn.Module):
         if torch.isnan(teacher_output).any() or torch.isinf(teacher_output).any():
             return
 
-        batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
-        # Synchronize across all GPUs: sum the features AND the count independently
-        # to correctly handle variable-length inputs (e.g. voxel count differs per scene/GPU)
-        world_size = commu_utils.get_world_size()
-        if world_size > 1:
-            count = torch.tensor(len(teacher_output), dtype=batch_center.dtype,
-                                 device=batch_center.device)
-            torch.distributed.all_reduce(batch_center)
-            torch.distributed.all_reduce(count)
-            batch_center = batch_center / count
-        else:
-            batch_center = batch_center / len(teacher_output)
+        # Force FP32 to prevent precision loss when summing many FP16 activations
+        with torch.cuda.amp.autocast(enabled=False):
+            teacher_output = teacher_output.float()
+            batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
 
-        self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
+            # Synchronize across all GPUs: sum the features AND the count independently
+            # to correctly handle variable-length inputs (e.g. voxel count differs per GPU)
+            world_size = commu_utils.get_world_size()
+            if world_size > 1:
+                count = torch.tensor(len(teacher_output), dtype=batch_center.dtype,
+                                     device=batch_center.device)
+                torch.distributed.all_reduce(batch_center)
+                torch.distributed.all_reduce(count)
+                batch_center = batch_center / count
+            else:
+                batch_center = batch_center / len(teacher_output)
+
+            self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
 
     def forward(
         self,
