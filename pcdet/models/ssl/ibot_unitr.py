@@ -67,9 +67,10 @@ class iBOTUniTR(nn.Module):
         d_model = model_cfg.MM_BACKBONE.d_model[-1]  # 128
         proj_hidden = self.ssl_cfg.PROJ_HIDDEN_DIM
         proj_out = self.ssl_cfg.PROJ_OUT_DIM
+        proj_bottleneck = self.ssl_cfg.get('PROJ_BOTTLENECK_DIM', 256)
 
-        self.student_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
-        self.teacher_proj = iBOTProjectionHead(d_model, proj_hidden, proj_out)
+        self.student_proj = iBOTProjectionHead(d_model, proj_hidden, proj_bottleneck, proj_out)
+        self.teacher_proj = iBOTProjectionHead(d_model, proj_hidden, proj_bottleneck, proj_out)
         for p in self.teacher_proj.parameters():
             p.requires_grad = False
 

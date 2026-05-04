@@ -1,8 +1,13 @@
 """
 Projection head and distillation loss for iBOT-style self-supervised pretraining.
 
-The projection head maps backbone outputs to a space where the distillation loss
-(cross-entropy between sharpened teacher and student distributions) is computed.
+Architecture follows the official iBOT DINOHead design:
+  MLP → bottleneck → L2-normalize → weight_norm(Linear) → raw logits
+
+The weight-normalized last layer prevents logit magnitude explosion while
+allowing the network to learn meaningful output directions. L2 normalization
+in the bottleneck space bounds the input to the last layer, creating tight
+control over the output scale.
 """
 
 import torch
@@ -14,30 +19,65 @@ from pcdet.utils import commu_utils
 
 class iBOTProjectionHead(nn.Module):
     """
-    3-layer MLP projection head following DINO/iBOT design.
-    Maps backbone features to a normalized output space.
+    Projection head following the official iBOT/DINO design.
+
+    Architecture: 3-layer MLP → bottleneck_dim → L2-norm → weight_norm(Linear → out_dim)
+
+    The bottleneck + L2-norm + weight_norm system ensures:
+      - Bottleneck compresses to a compact representation
+      - L2-norm puts all features on the unit hypersphere
+      - weight_norm(Linear) projects to output space with bounded magnitude
+        (weight_g frozen at 1, so only direction is learned)
+      - Output: raw logits (NOT L2-normalized), suitable for softmax distillation
     """
 
-    def __init__(self, in_dim: int, hidden_dim: int = 512, out_dim: int = 4096):
+    def __init__(self, in_dim: int, hidden_dim: int = 512,
+                 bottleneck_dim: int = 256, out_dim: int = 4096,
+                 norm_last_layer: bool = True):
         super().__init__()
+
+        # 3-layer MLP projecting to bottleneck dimension
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, out_dim),
+            nn.Linear(hidden_dim, bottleneck_dim),
         )
+
+        # Initialize weights with truncated normal (matching official iBOT)
+        self._init_weights()
+
+        # Weight-normalized last layer: direction is learned, magnitude is frozen at 1
+        # This prevents logit magnitude explosion while allowing meaningful logits
+        self.last_layer = nn.utils.weight_norm(
+            nn.Linear(bottleneck_dim, out_dim, bias=False)
+        )
+        self.last_layer.weight_g.data.fill_(1)
+        if norm_last_layer:
+            self.last_layer.weight_g.requires_grad = False
+
+    def _init_weights(self):
+        """Initialize MLP weights with truncated normal (std=0.02)."""
+        for m in self.mlp.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
             x: (N, in_dim) features from backbone.
         Returns:
-            (N, out_dim) L2-normalized projected features.
+            (N, out_dim) raw logits (not normalized).
         """
-        out = self.mlp(x)
-        # Force FP32 for normalization to prevent FP16 overflow in sum(x^2)
-        return F.normalize(out.float(), dim=-1, p=2)
+        x = self.mlp(x)
+        # L2-normalize in bottleneck space (FP32 for numerical safety)
+        x = F.normalize(x.float(), dim=-1, p=2)
+        # Project to output space via weight-normalized linear layer
+        x = self.last_layer(x)
+        return x
 
 
 class iBOTLoss(nn.Module):
@@ -72,7 +112,7 @@ class iBOTLoss(nn.Module):
         if len(teacher_output) == 0:
             return
 
-        # Force FP32 to prevent precision loss when summing many FP16 activations
+        # Force FP32 to prevent precision loss when summing many activations
         with torch.amp.autocast('cuda', enabled=False):
             teacher_output = teacher_output.float()
             batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
