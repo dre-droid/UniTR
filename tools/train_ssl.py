@@ -60,7 +60,7 @@ def model_fn_ssl(total_steps=None):
         loss = ret_dict['loss'].mean()
 
         # EMA teacher update + global step — outside autocast for FP32 safety
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', enabled=False):
             if hasattr(model, 'module'):
                 model.module.update_teacher(total_steps or 1)
                 model.module.update_global_step()

@@ -123,7 +123,7 @@ class iBOTUniTR(nn.Module):
         """
         momentum = self._get_momentum(total_steps)
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', enabled=False):
             for t_param, s_param in zip(self.teacher_vfe.parameters(),
                                          self.student_vfe.parameters()):
                 t_param.data.mul_(momentum).add_(s_param.data.float(), alpha=1.0 - momentum)

@@ -73,7 +73,7 @@ class iBOTLoss(nn.Module):
             return
 
         # Force FP32 to prevent precision loss when summing many FP16 activations
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', enabled=False):
             teacher_output = teacher_output.float()
             batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
 
