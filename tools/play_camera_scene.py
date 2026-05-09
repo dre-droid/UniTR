@@ -20,7 +20,8 @@ from pcdet.models.ssl.ibot_unitr import iBOTUniTR
 from pcdet.utils import common_utils
 from pcdet.models import load_data_to_gpu
 
-from visualize_ssl_features import extract_features_with_image_patches, pca_to_rgb
+from visualize_ssl_features import extract_features_with_image_patches, pca_to_rgb, get_concerto_pca_color
+from scipy.interpolate import NearestNDInterpolator
 
 def main():
     parser = argparse.ArgumentParser(description='Play camera feeds for a nuScenes scene')
@@ -30,7 +31,8 @@ def main():
     parser.add_argument('--split', type=str, default='test', choices=['train', 'test', 'val'])
     parser.add_argument('--output_dir', type=str, default='output/visualizations/scene_play')
     parser.add_argument('--view_mode', type=str, default='camera', choices=['camera', 'bev', '3d'])
-    parser.add_argument('--pca_start', type=int, default=0, help='Starting PCA component index (e.g. 1 to skip spatial gradient)')
+    parser.add_argument('--pca_start', type=int, default=0, help='Starting PCA component index')
+    parser.add_argument('--stride', type=int, default=1, help='Skip frames in the sequence')
     args = parser.parse_args()
 
     # Use split-specific output folder
@@ -92,23 +94,21 @@ def main():
 
     # 3. Fit Global PCA basis
     # Extract features for first and last sample to anchor the PCA
-    logger.info("Fitting global PCA basis for stable colors...")
     all_features = []
     with torch.no_grad():
-        for i in [scene_indices[0], scene_indices[-1]]:
+        # Sample start, middle, and end frames for a robust basis
+        indices = [scene_indices[0], scene_indices[len(scene_indices)//2], scene_indices[-1]]
+        for i in indices:
             batch_dict = dataset[i]
             batch_dict = dataset.collate_batch([batch_dict])
             load_data_to_gpu(batch_dict)
             res = extract_features_with_image_patches(model, batch_dict, logger)
-            if args.view_mode == 'camera':
-                # (6, 128, 32, 88) -> (6*32*88, 128)
-                f = res['patch_features'].transpose(0, 2, 3, 1).reshape(-1, 128)
-            else:
-                f = res['pillar_features']
-            all_features.append(f)
+            all_features.append(res['pillar_features'])
     
     global_features = np.concatenate(all_features, axis=0)
-    _, pca_obj = pca_to_rgb(global_features, start_component=args.pca_start)
+    # Fit the global Concerto basis (top 12 components)
+    _, global_v = get_concerto_pca_color(global_features, brightness=1.1)
+    logger.info("Global Concerto basis fitted.")
 
     # 4. Generate frames
     frames = []
@@ -136,7 +136,7 @@ def main():
             for cam_i in range(6):
                 # PCA for this camera
                 cam_feats = patch_feats[cam_i].transpose(1, 2, 0).reshape(-1, 128)
-                rgb_map, _ = pca_to_rgb(cam_feats, pca_obj=pca_obj, start_component=args.pca_start)
+                rgb_map, _ = pca_to_rgb(cam_feats, pca_obj=global_v, start_component=args.pca_start)
                 rgb_map = rgb_map.reshape(pH, pW, 3)
                 
                 # Upsample
@@ -161,7 +161,7 @@ def main():
             pillar_features = res['pillar_features']
             pillar_coords = res['pillar_coords']
             
-            rgb_b0, _ = pca_to_rgb(pillar_features, pca_obj=pca_obj, start_component=args.pca_start)
+            rgb_b0, _ = pca_to_rgb(pillar_features, pca_obj=global_v, start_component=args.pca_start)
             
             grid_h, grid_w = 360, 360
             bev_image = np.ones((grid_h, grid_w, 3), dtype=np.float32) * 0.15
@@ -186,48 +186,53 @@ def main():
         elif args.view_mode == '3d':
             pillar_features = res['pillar_features']
             pillar_coords = res['pillar_coords']
+            points = res['points']
+            pc_range = res['pc_range']
+            voxel_size = res['voxel_size']
             
-            rgb, _ = pca_to_rgb(pillar_features, pca_obj=pca_obj, start_component=args.pca_start)
+            # 1. Concerto PCA for pillars using GLOBAL basis
+            mask_pillars = (pillar_coords[:, 0] == 0)
+            feats_b0 = pillar_features[mask_pillars]
+            coords_b0 = pillar_coords[mask_pillars]
+            rgb_pillars, _ = get_concerto_pca_color(feats_b0, brightness=1.1, v_matrix=global_v)
             
-            mask_b0 = pillar_coords[:, 0] == 0
-            coords_b0 = pillar_coords[mask_b0]
-            rgb_b0 = rgb[mask_b0]
+            # 2. Extract and Crop points
+            mask_pts = (points[:, 0] == 0)
+            pts_b0 = points[mask_pts]
+            crop_mask = (pts_b0[:, 1] > -35) & (pts_b0[:, 1] < 35) & \
+                        (pts_b0[:, 2] > -25) & (pts_b0[:, 2] < 65) & \
+                        (pts_b0[:, 3] > -5) & (pts_b0[:, 3] < 5)
+            pts_b0 = pts_b0[crop_mask]
+            if len(pts_b0) == 0:
+                pts_b0 = points[mask_pts]
             
-            x_world = (coords_b0[:, 3] * 0.3) - 54.0
-            y_world = (coords_b0[:, 2] * 0.3) - 54.0
-            z_world = np.zeros_like(x_world)
+            raw_x, raw_y, raw_z = pts_b0[:, 1], pts_b0[:, 2], pts_b0[:, 3]
             
-            cam_pos = np.array([-25, 0, 15]) 
-            look_at = np.array([10, 0, 0])
+            # 3. Dense Interpolation
+            from scipy.interpolate import NearestNDInterpolator
+            train_x = (coords_b0[:, 3] * voxel_size[0]) + pc_range[0]
+            train_y = (coords_b0[:, 2] * voxel_size[1]) + pc_range[1]
+            interp = NearestNDInterpolator(np.stack([train_x, train_y], axis=1), rgb_pillars)
+            final_colors = interp(np.stack([raw_x, raw_y], axis=1))
             
-            points = np.stack([x_world, y_world, z_world], axis=1)
-            rel_points = points - cam_pos
+            # 4. Plot (Sharper 3D)
+            fig = plt.figure(figsize=(16, 10), dpi=150) # Higher DPI
+            ax = fig.add_subplot(111, projection='3d')
+            ax.set_facecolor('#050508')
+            fig.patch.set_facecolor('#050508')
             
-            forward = (look_at - cam_pos)
-            forward = forward / np.linalg.norm(forward)
-            right = np.cross(np.array([0, 0, 1]), forward)
-            right = right / np.linalg.norm(right)
-            up = np.cross(forward, right)
+            ax.scatter(raw_x, raw_y, raw_z, c=final_colors, s=2.5, alpha=0.9, edgecolors='none')
             
-            x_cam = np.sum(rel_points * right, axis=1)
-            y_cam = np.sum(rel_points * up, axis=1)
-            z_cam = np.sum(rel_points * forward, axis=1)
+            ax.set_box_aspect((70, 90, 25)) 
+            ax.view_init(elev=32, azim=-90)
             
-            mask = z_cam > 1.0
-            x_cam, y_cam, z_cam, rgb_b0 = x_cam[mask], y_cam[mask], z_cam[mask], rgb_b0[mask]
+            ax.set_xlim(-35, 35)
+            ax.set_ylim(-25, 65)
+            ax.set_zlim(-4, 6)
             
-            focal = 500
-            u = (x_cam * focal / z_cam)
-            v = (y_cam * focal / z_cam)
-            
-            fig, ax = plt.subplots(1, 1, figsize=(12, 8), dpi=100)
-            ax.scatter(u, -v, c=rgb_b0, s=2, edgecolors='none', alpha=0.8) # -v to flip y for screen coords
-            
-            ax.set_xlim(-600, 600)
-            ax.set_ylim(-400, 400)
-            ax.set_title(f"Scene: {scene['name']} | Sample: {i} | Concerto 3D View", fontsize=16, color='white', pad=20)
             ax.axis('off')
-            fig.patch.set_facecolor('#1a1a2e')
+            ax.set_title(f"Scene: {scene['name']} | Sample: {i}", 
+                         fontsize=16, color='white', pad=-20)
         
         # Save to buffer
         fig.canvas.draw()

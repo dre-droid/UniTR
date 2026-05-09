@@ -45,14 +45,18 @@ def parse_args():
     parser.add_argument('--checkpoint', type=str, required=True,
                         help='Path to SSL checkpoint (latest_model.pth or pretrained_unitr.pth)')
     parser.add_argument('--mode', type=str, default='bev_pca',
-                        choices=['bev_pca', 'camera_pca', 'bev_similarity', 'all'],
+                        choices=['bev_pca', 'camera_pca', 'bev_similarity', 'lidar_3d_pca', 'all'],
                         help='Visualization mode')
     parser.add_argument('--sample_idx', type=int, default=0,
                         help='Index of the sample in the dataset to visualize')
+    parser.add_argument('--split', type=str, default='val', choices=['train', 'val', 'test'],
+                        help='Dataset split to use')
     parser.add_argument('--query_xy', type=float, nargs=2, default=[0.0, 0.0],
                         help='Query point [x, y] in meters for bev_similarity mode')
     parser.add_argument('--output_dir', type=str, default='../output/visualizations')
     parser.add_argument('--no_overlay', action='store_true', help='Do not overlay features on original images')
+    parser.add_argument('--pca_start', type=int, default=0,
+                        help='Starting PCA component index (e.g. 1 to skip first gradient)')
     parser.add_argument('--set', dest='set_cfgs', default=None, nargs=argparse.REMAINDER)
     return parser.parse_args()
 
@@ -68,7 +72,7 @@ def load_model_and_data(args):
     logger = common_utils.create_logger()
     logger.info('Loading dataset...')
 
-    # Build dataloader (training=False for clean deterministic loading)
+    # Build dataloader
     dataset, dataloader, _ = build_dataloader(
         dataset_cfg=cfg.DATA_CONFIG,
         class_names=cfg.CLASS_NAMES,
@@ -76,7 +80,7 @@ def load_model_and_data(args):
         dist=False,
         workers=2,
         logger=logger,
-        training=False,
+        training=(args.split == 'train'),
     )
     logger.info(f'Dataset size: {len(dataset)}')
 
@@ -104,58 +108,6 @@ def load_model_and_data(args):
     model.cuda().eval()
     return model, dataset, dataloader, logger
 
-
-@torch.no_grad()
-def extract_features(model, batch_dict):
-    """Run the teacher backbone on a batch and return pillar + image features."""
-    # Step 1: VFE
-    batch_dict = model.vfe(batch_dict)
-    voxel_features = batch_dict['voxel_features']
-    voxel_coords = batch_dict['voxel_coords']
-    voxel_num = voxel_features.shape[0]
-
-    # Step 2: Teacher backbone (unmasked, clean features)
-    teacher_batch = {
-        'batch_size': batch_dict['batch_size'],
-        'camera_imgs': batch_dict['camera_imgs'],
-        'voxel_features': voxel_features,
-        'voxel_coords': voxel_coords,
-        'voxel_num': voxel_num,
-    }
-
-    # We need access to the raw output tensor (before pillar/image split)
-    # to extract image patch features. Hook into the backbone forward.
-    backbone = model.teacher_backbone
-
-    # Run full backbone forward
-    teacher_out = backbone(teacher_batch)
-
-    # Extract LiDAR pillar features
-    pillar_features = teacher_out['pillar_features']  # (N_voxels, 128)
-    pillar_coords = teacher_out['voxel_coords']       # (N_voxels, 4) [batch, z, y, x]
-
-    # For image features: we need to re-extract from the backbone.
-    # The output tensor is [lidar_pillars; image_patches] concatenated.
-    # Since out_indices=[], image_features list is empty.
-    # We need to re-run and capture the raw output. Let's use a hook instead.
-    # Actually, the simplest approach: the backbone stores batch_dict['pillar_features']
-    # = output[:voxel_num], but the full output also has image patches.
-    # Let's hook into the forward to capture the full joint output.
-
-    result = {
-        'pillar_features': pillar_features.cpu().numpy(),
-        'pillar_coords': pillar_coords.cpu().numpy(),
-        'voxel_num': voxel_num,
-        'batch_size': batch_dict['batch_size'],
-    }
-
-    # Extract raw camera images for overlay
-    if 'camera_imgs' in batch_dict:
-        result['camera_imgs'] = batch_dict['camera_imgs'].cpu().numpy()
-
-    return result
-
-
 @torch.no_grad()
 def extract_features_with_image_patches(model, batch_dict, logger):
     """
@@ -175,7 +127,7 @@ def extract_features_with_image_patches(model, batch_dict, logger):
         backbone.add_module('out_norm3', nn.LayerNorm(backbone.d_model[-1]).cuda())
     
     # Step 1: VFE
-    batch_dict = model.vfe(batch_dict)
+    batch_dict = model.teacher_vfe(batch_dict)
     voxel_features = batch_dict['voxel_features']
     voxel_coords = batch_dict['voxel_coords']
     voxel_num = voxel_features.shape[0]
@@ -203,66 +155,69 @@ def extract_features_with_image_patches(model, batch_dict, logger):
     if len(teacher_out.get('image_features', [])) > 0:
         patch_feats = teacher_out['image_features'][0]  # (B*6, 128, 32, 88)
     else:
-        # Fallback to patch_embed if transformer output failed (shouldn't happen)
-        imgs = batch_dict['camera_imgs']
-        B, N_cam, C, H, W = imgs.shape
-        imgs_flat = imgs.view(B * N_cam, C, H, W)
-        patch_feats, out_size = backbone.patch_embed(imgs_flat)
-        patch_feats = patch_feats.transpose(1, 2).view(B * N_cam, 128, out_size[0], out_size[1])
+        raise RuntimeError(
+            "Failed to extract 'image_features' from the backbone. "
+            "Ensure that 'out_indices' is set correctly (e.g., [3]) and that the "
+            "backbone is correctly populating the 'image_features' list in its forward pass."
+        )
 
     result = {
         'pillar_features': pillar_features.cpu().numpy(),
         'pillar_coords': pillar_coords.cpu().numpy(),
         'patch_features': patch_feats.cpu().numpy(),   # (B*6, 128, 32, 88)
         'camera_imgs': batch_dict['camera_imgs'].cpu().numpy(),
+        'points': batch_dict['points'].cpu().numpy(),
         'voxel_num': voxel_num,
         'batch_size': batch_dict['batch_size'],
+        'pc_range': model.dataset.point_cloud_range,
+        'voxel_size': model.dataset.voxel_size,
     }
 
     return result
 
 
-def pca_to_rgb(features, n_components=3, pca_obj=None, start_component=0):
+def get_concerto_pca_color(feat, brightness=1.0, center=True, v_matrix=None):
     """
-    Reduce N-dimensional features to 3-component RGB via PCA.
-    
-    Args:
-        features: (N, D) numpy array
-        n_components: Number of components to return (default 3 for RGB)
-        pca_obj: Optional pre-fitted sklearn PCA object for consistency
-        start_component: The index of the first component to use (e.g., 1 to skip the first gradient)
-    Returns:
-        rgb: (N, n_components) numpy array in [0, 1]
-        pca_obj: The fitted/used PCA object
+    Concerto-style PCA coloring: Weighted blend of top 12 components.
+    Supports a fixed v_matrix for temporal stability in videos.
     """
-    total_needed = n_components + start_component
-    if features.shape[0] < total_needed:
-        return np.zeros((features.shape[0], n_components)), None
+    if isinstance(feat, np.ndarray):
+        feat = torch.from_numpy(feat).float().cuda()
     
-    if pca_obj is None:
-        pca_obj = PCA(n_components=total_needed)
-        rgb_full = pca_obj.fit_transform(features)
-    else:
-        rgb_full = pca_obj.transform(features)
+    if v_matrix is None:
+        # Calculate basis if not provided
+        u, s, v_matrix = torch.pca_lowrank(feat, center=center, q=12, niter=5)
     
-    # Select requested components
-    rgb = rgb_full[:, start_component:total_needed]
+    # Project using either the new or provided basis
+    projection = feat @ v_matrix
     
-    # Normalize each selected component to [0, 1]
-    for i in range(n_components):
-        col = rgb[:, i]
-        # Use robust scaling (clipping outliers)
-        vmin, vmax = np.percentile(col, [2, 98])
-        if vmax - vmin > 1e-8:
-            col = np.clip(col, vmin, vmax)
-            rgb[:, i] = (col - vmin) / (vmax - vmin)
-        else:
-            rgb[:, i] = 0.5
+    # Weighted blend of components (0.2, 0.2, 0.1, 0.5)
+    rgb = projection[:, :3] * 0.2 + \
+          projection[:, 3:6] * 0.2 + \
+          projection[:, 6:9] * 0.1 + \
+          projection[:, 9:12] * 0.5
     
-    return rgb, pca_obj
+    # Robust normalization [0, 1]
+    rgb_np = rgb.cpu().numpy()
+    vmin = np.percentile(rgb_np, 2, axis=0)
+    vmax = np.percentile(rgb_np, 98, axis=0)
+    rgb_np = np.clip((rgb_np - vmin) / (vmax - vmin + 1e-6), 0, 1)
+    
+    # Multiply by brightness
+    rgb_np = np.clip(rgb_np * brightness, 0, 1)
+    
+    return rgb_np, v_matrix
 
 
-def visualize_bev_pca(result, output_dir, logger, pca_obj=None):
+def pca_to_rgb(features, pca_obj=None, start_component=0):
+    """
+    Standard wrapper for BEV/Camera modes using Concerto blend.
+    """
+    rgb_np, _ = get_concerto_pca_color(features, v_matrix=pca_obj)
+    return rgb_np, pca_obj
+
+
+def visualize_bev_pca(result, output_dir, logger, pca_obj=None, pca_start=0):
     """
     Mode 1: BEV feature map colored by PCA of pillar features.
     """
@@ -274,7 +229,7 @@ def visualize_bev_pca(result, output_dir, logger, pca_obj=None):
     logger.info(f'Pillar features shape: {pillar_features.shape}')
     
     # PCA → RGB
-    rgb, pca_obj = pca_to_rgb(pillar_features, pca_obj=pca_obj)
+    rgb, pca_obj = pca_to_rgb(pillar_features, pca_obj=pca_obj, start_component=pca_start)
     
     # Build BEV grid image
     # Grid is 360x360 (from sparse_shape config), coords are [batch, z, y, x]
@@ -317,7 +272,7 @@ def visualize_bev_pca(result, output_dir, logger, pca_obj=None):
     return out_path, pca_obj
 
 
-def visualize_camera_pca(result, output_dir, logger, pca_obj=None, no_overlay=False):
+def visualize_camera_pca(result, output_dir, logger, pca_obj=None, no_overlay=False, pca_start=0):
     """
     Mode 2: Camera images overlaid with PCA of image patch features.
     """
@@ -336,7 +291,7 @@ def visualize_camera_pca(result, output_dir, logger, pca_obj=None, no_overlay=Fa
     # Re-order features for global PCA fit across all cameras
     # (6, 128, 32, 88) -> (6*32*88, 128)
     all_patches = patch_feats_b0.transpose(0, 2, 3, 1).reshape(-1, D)
-    rgb_all, pca_obj = pca_to_rgb(all_patches, pca_obj=pca_obj)
+    rgb_all, pca_obj = pca_to_rgb(all_patches, pca_obj=pca_obj, start_component=pca_start)
     
     rgb_maps = rgb_all.reshape(N_cam, pH, pW, 3)
     
@@ -469,6 +424,85 @@ def visualize_bev_similarity(result, query_xy, output_dir, logger):
     return out_path
 
 
+def visualize_lidar_3d_pca(result, output_dir, logger, pca_obj=None, pca_start=0):
+    """
+    Mode 4: 3D point cloud colored by Concerto-style PCA features.
+    Improved Density: Uses interpolation to color ALL points in the scene.
+    """
+    logger.info('--- Mode: 3D LiDAR PCA (Dense Concerto-Style) ---')
+    
+    points = result['points']
+    pillar_features = result['pillar_features']
+    pillar_coords = result['pillar_coords']
+    pc_range = result['pc_range']
+    voxel_size = result['voxel_size']
+    
+    # 1. Extract Batch 0 points
+    mask_pts = (points[:, 0] == 0)
+    pts_b0 = points[mask_pts]
+    
+    # Preferred Crop: 40m wide, 90m deep
+    crop_mask = (pts_b0[:, 1] > -35) & (pts_b0[:, 1] < 35) & \
+                (pts_b0[:, 2] > -25) & (pts_b0[:, 2] < 65) & \
+                (pts_b0[:, 3] > -5) & (pts_b0[:, 3] < 5)
+    
+    pts_b0 = pts_b0[crop_mask]
+    if len(pts_b0) == 0:
+        pts_b0 = points[mask_pts]
+
+    raw_x, raw_y, raw_z = pts_b0[:, 1], pts_b0[:, 2], pts_b0[:, 3]
+    raw_i = pts_b0[:, 4] if pts_b0.shape[1] > 4 else np.ones_like(raw_x)
+
+    # 2. Get Concerto PCA colors
+    mask_pillars = (pillar_coords[:, 0] == 0)
+    feats_b0 = pillar_features[mask_pillars]
+    coords_b0 = pillar_coords[mask_pillars]
+    rgb_pillars = get_concerto_pca_color(feats_b0, brightness=1.1)
+    
+    # 3. Dense Mapping (Nearest Neighbor Interpolation)
+    from scipy.interpolate import NearestNDInterpolator
+    train_x = (coords_b0[:, 3] * voxel_size[0]) + pc_range[0]
+    train_y = (coords_b0[:, 2] * voxel_size[1]) + pc_range[1]
+    interp = NearestNDInterpolator(np.stack([train_x, train_y], axis=1), rgb_pillars)
+    final_colors = interp(np.stack([raw_x, raw_y], axis=1))
+    
+    # Fallback for far points
+    nan_mask = np.isnan(final_colors).any(axis=1)
+    if nan_mask.any():
+        gray = np.clip(raw_i[nan_mask] / 255.0, 0.1, 0.3)
+        final_colors[nan_mask] = np.stack([gray, gray, gray], axis=1)
+
+    # 4. Plotting
+    fig = plt.figure(figsize=(18, 12), dpi=150)
+    ax = fig.add_subplot(111, projection='3d')
+    ax.set_facecolor('#050508')
+    fig.patch.set_facecolor('#050508')
+    
+    # Plot points
+    ax.scatter(raw_x, raw_y, raw_z, c=final_colors, s=2.2, alpha=0.95, edgecolors='none')
+    
+    # Correct aspect ratio
+    ax.set_box_aspect((70, 90, 25)) 
+    
+    # View: Behind and tilted down
+    ax.view_init(elev=32, azim=-90)
+    
+    # View bounds (Zoomed)
+    ax.set_xlim(-35, 35)
+    ax.set_ylim(-25, 65)
+    ax.set_zlim(-4, 6)
+    
+    ax.axis('off')
+    ax.set_title(f'3D SSL Features - Dense Concerto View (Sample {result.get("sample_idx", "?")})', 
+                 color='white', fontsize=18, pad=-30)
+    
+    out_path = os.path.join(output_dir, 'lidar_3d_pca_concerto_dense.png')
+    fig.savefig(out_path, bbox_inches='tight', facecolor='#050508', pad_inches=0)
+    plt.close(fig)
+    logger.info(f'Saved dense Concerto-style 3D plot to: {out_path}')
+    return out_path
+
+
 def main():
     args = parse_args()
     os.makedirs(args.output_dir, exist_ok=True)
@@ -495,18 +529,21 @@ def main():
     load_data_to_gpu(batch_dict)
     
     # Run modes
-    modes = ['bev_pca', 'camera_pca', 'bev_similarity'] if args.mode == 'all' else [args.mode]
+    modes = ['bev_pca', 'camera_pca', 'bev_similarity', 'lidar_3d_pca'] if args.mode == 'all' else [args.mode]
     
     for mode in modes:
         if mode == 'camera_pca':
             result = extract_features_with_image_patches(model, batch_dict, logger)
-            visualize_camera_pca(result, args.output_dir, logger, no_overlay=args.no_overlay)
+            visualize_camera_pca(result, args.output_dir, logger, no_overlay=args.no_overlay, pca_start=args.pca_start)
         elif mode == 'bev_pca':
             result = extract_features_with_image_patches(model, batch_dict, logger) # capture joint
-            visualize_bev_pca(result, args.output_dir, logger)
+            visualize_bev_pca(result, args.output_dir, logger, pca_start=args.pca_start)
         elif mode == 'bev_similarity':
             result = extract_features_with_image_patches(model, batch_dict, logger)
             visualize_bev_similarity(result, args.query_xy, args.output_dir, logger)
+        elif mode == 'lidar_3d_pca':
+            result = extract_features_with_image_patches(model, batch_dict, logger)
+            visualize_lidar_3d_pca(result, args.output_dir, logger, pca_start=args.pca_start)
     
     logger.info('Done! All visualizations saved.')
 
