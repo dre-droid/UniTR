@@ -204,14 +204,58 @@ class iBOTUniTR(nn.Module):
         # ---- Total loss ----
         loss = loss_voxel + loss_patch
 
+        # ---- Diagnostics (no_grad, minimal overhead) ----
+        with torch.no_grad():
+            # -- Teacher logit scale (should be O(1-10), not growing unboundedly) --
+            t_vox_scale = teacher_voxel_proj.float().abs().mean().item()
+            t_pat_scale = teacher_patch_proj.float().abs().mean().item()
+
+            # -- Feature norms before projection (backbone output health) --
+            teacher_voxel_norm = teacher_voxel_out.float().norm(dim=-1).mean().item()
+            teacher_patch_norm = teacher_patch_out.float().norm(dim=-1).mean().item()
+
+            # -- Collapse detection: what fraction of tokens predict the same top-1 bucket?
+            # If the teacher is collapsing, all tokens would vote for 1 bucket → ratio → 1.0
+            # Healthy: ratio should be low (tokens spread across many buckets)
+            t_vox_top1 = teacher_voxel_proj.float().argmax(dim=-1)
+            t_vox_collapse = (t_vox_top1 == t_vox_top1.mode().values).float().mean().item()
+            t_pat_top1 = teacher_patch_proj.float().argmax(dim=-1)
+            t_pat_collapse = (t_pat_top1 == t_pat_top1.mode().values).float().mean().item()
+
+            # -- Center norm (should be small; a large center means heavy imbalance) --
+            center_vox_norm = self.loss_fn_voxel.center.float().norm().item()
+            center_pat_norm = self.loss_fn_patch.center.float().norm().item()
+
+            # -- Student logit scale for comparison --
+            s_vox_scale = student_voxel_proj.float().abs().mean().item()
+            s_pat_scale = student_patch_proj.float().abs().mean().item()
+
         tb_dict = {
+            # Losses
             'loss_mim_voxel': loss_voxel.item(),
             'loss_mim_patch': loss_patch.item(),
             'loss_total': loss.item(),
+            # Training state
             'ema_momentum': self._get_momentum(1),
+            # Token counts
             'num_voxels': voxel_num,
             'num_masked_voxels': voxel_mask.sum().item(),
             'num_masked_patches': patch_mask.sum().item(),
+            # Logit scale (critical: should not grow unboundedly)
+            'diag/teacher_voxel_logit_scale': t_vox_scale,
+            'diag/teacher_patch_logit_scale': t_pat_scale,
+            'diag/student_voxel_logit_scale': s_vox_scale,
+            'diag/student_patch_logit_scale': s_pat_scale,
+            # Backbone feature norms (pre-projection)
+            'diag/teacher_voxel_feat_norm': teacher_voxel_norm,
+            'diag/teacher_patch_feat_norm': teacher_patch_norm,
+            # Collapse detection (fraction of tokens voting for the mode bucket)
+            # Healthy: < 0.01. Collapsing: → 1.0
+            'diag/teacher_voxel_collapse_ratio': t_vox_collapse,
+            'diag/teacher_patch_collapse_ratio': t_pat_collapse,
+            # Center norms (large center → imbalanced distribution)
+            'diag/center_voxel_norm': center_vox_norm,
+            'diag/center_patch_norm': center_pat_norm,
         }
         disp_dict = {}
 
