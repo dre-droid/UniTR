@@ -27,15 +27,18 @@ warnings.filterwarnings("ignore", message=".*custom_bwd.*deprecated.*")
 
 from pcdet.config import cfg, cfg_from_list, cfg_from_yaml_file, log_config_to_file
 from pcdet.datasets import build_dataloader
-from pcdet.models.ssl import iBOTUniTR
+from pcdet.models.ssl import __all__ as SSL_REGISTRY
 from pcdet.utils import common_utils
 from train_utils.optimization import build_optimizer, build_scheduler
 from train_utils.train_utils import train_model, save_checkpoint, checkpoint_state
 
 
 def build_ssl_network(model_cfg, dataset):
-    """Build the iBOT SSL network."""
-    model = iBOTUniTR(
+    """Build the SSL network from the registry using MODEL.NAME."""
+    model_name = model_cfg.NAME
+    if model_name not in SSL_REGISTRY:
+        raise ValueError(f'Unknown SSL model: {model_name}. Available: {list(SSL_REGISTRY.keys())}')
+    model = SSL_REGISTRY[model_name](
         model_cfg=model_cfg,
         num_class=0,  # no classes for SSL
         dataset=dataset,

@@ -260,55 +260,88 @@ def train_model(model, optimizer, train_loader, model_func, lr_scheduler, optim_
                 visualize_ssl(model, train_loader, cfg, trained_epoch, ckpt_save_dir.parent, logger)
 
             # SSL Epoch-End Diagnostics (rank 0 only, zero training overhead)
-            if rank == 0 and hasattr(model, 'module') and hasattr(model.module, 'student_proj'):
-                _model = model.module
+            # Supports both shared-head (iBOTUniTR) and split-head (iBOTUniTRSplit)
+            _model = model.module if hasattr(model, 'module') else model
+            has_shared = hasattr(_model, 'student_proj')
+            has_split = hasattr(_model, 'student_proj_voxel')
+            if rank == 0 and (has_shared or has_split):
                 with torch.no_grad():
-                    # -- Projection head last layer weight_g (should stay ~1.0 with frozen norm) --
-                    # weight_g has shape (out_features, 1) = (4096, 1) — one per output neuron
-                    wg_tensor = _model.student_proj.last_layer.weight_g.float()
-                    wg_mean = wg_tensor.mean().item()
-                    wg_std = wg_tensor.std().item()
-
-                    # -- MLP weight norms (growing norms = exploding weights) --
-                    mlp_norms = [p.data.float().norm().item()
-                                 for p in _model.student_proj.mlp.parameters() if p.dim() >= 2]
-                    mlp_weight_norm_avg = sum(mlp_norms) / max(len(mlp_norms), 1)
-
-                    # -- Gradient norm of projection head (NaN here = upstream NaN) --
-                    grad_norms = [p.grad.float().norm().item()
-                                  for p in _model.student_proj.parameters()
-                                  if p.grad is not None]
-                    proj_grad_norm = sum(grad_norms) / max(len(grad_norms), 1) if grad_norms else float('nan')
-
-                    # -- Student/teacher parameter divergence (L2 dist per param, averaged)
-                    # Should grow slowly from 0. If it collapses back to 0 → EMA momentum too high.
-                    param_dists = [
-                        (tp.data.float() - sp.data.float()).norm().item()
-                        for tp, sp in zip(_model.teacher_proj.parameters(),
-                                          _model.student_proj.parameters())
-                    ]
-                    proj_param_dist = sum(param_dists) / max(len(param_dists), 1)
-
                     # -- Backbone param norms (spot catastrophic weight growth) --
                     bb_norms = [p.data.float().norm().item()
                                 for p in _model.student_backbone.parameters() if p.dim() >= 2]
                     bb_weight_norm_avg = sum(bb_norms) / max(len(bb_norms), 1)
 
-                logger.info(
-                    f'[SSL Epoch {trained_epoch} Diagnostics]  '
-                    f'proj_head.weight_g_mean={wg_mean:.4f} (target≈1.0) std={wg_std:.4f}  '
-                    f'mlp_weight_norm_avg={mlp_weight_norm_avg:.3f}  '
-                    f'proj_grad_norm={proj_grad_norm:.3f}  '
-                    f'student_teacher_proj_dist={proj_param_dist:.4f}  '
-                    f'backbone_weight_norm_avg={bb_weight_norm_avg:.3f}'
-                )
-                if tb_log is not None:
-                    tb_log.add_scalar('ssl_diag/proj_last_layer_weight_g_mean', wg_mean, trained_epoch)
-                    tb_log.add_scalar('ssl_diag/proj_last_layer_weight_g_std', wg_std, trained_epoch)
-                    tb_log.add_scalar('ssl_diag/proj_mlp_weight_norm', mlp_weight_norm_avg, trained_epoch)
-                    tb_log.add_scalar('ssl_diag/proj_grad_norm', proj_grad_norm, trained_epoch)
-                    tb_log.add_scalar('ssl_diag/student_teacher_proj_dist', proj_param_dist, trained_epoch)
-                    tb_log.add_scalar('ssl_diag/backbone_weight_norm', bb_weight_norm_avg, trained_epoch)
+                    if has_shared:
+                        # Original shared-head path
+                        wg_tensor = _model.student_proj.last_layer.weight_g.float()
+                        wg_mean = wg_tensor.mean().item()
+                        wg_std = wg_tensor.std().item()
+                        mlp_norms = [p.data.float().norm().item()
+                                     for p in _model.student_proj.mlp.parameters() if p.dim() >= 2]
+                        mlp_weight_norm_avg = sum(mlp_norms) / max(len(mlp_norms), 1)
+                        grad_norms = [p.grad.float().norm().item()
+                                      for p in _model.student_proj.parameters()
+                                      if p.grad is not None]
+                        proj_grad_norm = sum(grad_norms) / max(len(grad_norms), 1) if grad_norms else float('nan')
+                        param_dists = [
+                            (tp.data.float() - sp.data.float()).norm().item()
+                            for tp, sp in zip(_model.teacher_proj.parameters(),
+                                              _model.student_proj.parameters())
+                        ]
+                        proj_param_dist = sum(param_dists) / max(len(param_dists), 1)
+
+                        logger.info(
+                            f'[SSL Epoch {trained_epoch} Diagnostics]  '
+                            f'proj_head.weight_g_mean={wg_mean:.4f} (target≈1.0) std={wg_std:.4f}  '
+                            f'mlp_weight_norm_avg={mlp_weight_norm_avg:.3f}  '
+                            f'proj_grad_norm={proj_grad_norm:.3f}  '
+                            f'student_teacher_proj_dist={proj_param_dist:.4f}  '
+                            f'backbone_weight_norm_avg={bb_weight_norm_avg:.3f}'
+                        )
+                        if tb_log is not None:
+                            tb_log.add_scalar('ssl_diag/proj_last_layer_weight_g_mean', wg_mean, trained_epoch)
+                            tb_log.add_scalar('ssl_diag/proj_last_layer_weight_g_std', wg_std, trained_epoch)
+                            tb_log.add_scalar('ssl_diag/proj_mlp_weight_norm', mlp_weight_norm_avg, trained_epoch)
+                            tb_log.add_scalar('ssl_diag/proj_grad_norm', proj_grad_norm, trained_epoch)
+                            tb_log.add_scalar('ssl_diag/student_teacher_proj_dist', proj_param_dist, trained_epoch)
+                            tb_log.add_scalar('ssl_diag/backbone_weight_norm', bb_weight_norm_avg, trained_epoch)
+
+                    elif has_split:
+                        # Split-head path: per-modality diagnostics
+                        for modality, s_proj, t_proj in [
+                            ('voxel', _model.student_proj_voxel, _model.teacher_proj_voxel),
+                            ('patch', _model.student_proj_patch, _model.teacher_proj_patch),
+                        ]:
+                            wg_tensor = s_proj.last_layer.weight_g.float()
+                            wg_mean = wg_tensor.mean().item()
+                            mlp_norms = [p.data.float().norm().item()
+                                         for p in s_proj.mlp.parameters() if p.dim() >= 2]
+                            mlp_norm = sum(mlp_norms) / max(len(mlp_norms), 1)
+                            grad_norms = [p.grad.float().norm().item()
+                                          for p in s_proj.parameters() if p.grad is not None]
+                            grad_norm = sum(grad_norms) / max(len(grad_norms), 1) if grad_norms else float('nan')
+                            param_dists = [
+                                (tp.data.float() - sp.data.float()).norm().item()
+                                for tp, sp in zip(t_proj.parameters(), s_proj.parameters())
+                            ]
+                            param_dist = sum(param_dists) / max(len(param_dists), 1)
+
+                            logger.info(
+                                f'[SSL Epoch {trained_epoch} Split-{modality}]  '
+                                f'weight_g_mean={wg_mean:.4f}  '
+                                f'mlp_weight_norm={mlp_norm:.3f}  '
+                                f'grad_norm={grad_norm:.3f}  '
+                                f'st_dist={param_dist:.4f}'
+                            )
+                            if tb_log is not None:
+                                tb_log.add_scalar(f'ssl_diag/{modality}_weight_g_mean', wg_mean, trained_epoch)
+                                tb_log.add_scalar(f'ssl_diag/{modality}_mlp_weight_norm', mlp_norm, trained_epoch)
+                                tb_log.add_scalar(f'ssl_diag/{modality}_grad_norm', grad_norm, trained_epoch)
+                                tb_log.add_scalar(f'ssl_diag/{modality}_st_dist', param_dist, trained_epoch)
+
+                        logger.info(f'[SSL Epoch {trained_epoch}]  backbone_weight_norm={bb_weight_norm_avg:.3f}')
+                        if tb_log is not None:
+                            tb_log.add_scalar('ssl_diag/backbone_weight_norm', bb_weight_norm_avg, trained_epoch)
 
             if trained_epoch % ckpt_save_interval == 0 and rank == 0:
 

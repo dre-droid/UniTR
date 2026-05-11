@@ -97,6 +97,8 @@ class iBOTUniTR(nn.Module):
 
         # Global step counter for EMA schedule
         self.register_buffer('global_step', torch.LongTensor(1).zero_())
+        # Store total_steps for correct logging (set by update_teacher)
+        self.register_buffer('_total_steps', torch.LongTensor([1]))
 
     def update_global_step(self):
         self.global_step += 1
@@ -122,6 +124,9 @@ class iBOTUniTR(nn.Module):
         Only learned parameters (weights/biases) are EMA-updated.
         BN running stats are naturally updated during the teacher's forward pass.
         """
+        # Store total_steps for correct logging
+        self._total_steps.fill_(total_steps)
+
         momentum = self._get_momentum(total_steps)
 
         with torch.amp.autocast('cuda', enabled=False):
@@ -236,7 +241,7 @@ class iBOTUniTR(nn.Module):
             'loss_mim_patch': loss_patch.item(),
             'loss_total': loss.item(),
             # Training state
-            'ema_momentum': self._get_momentum(1),
+            'ema_momentum': self._get_momentum(self._total_steps.item()),
             # Token counts
             'num_voxels': voxel_num,
             'num_masked_voxels': voxel_mask.sum().item(),
