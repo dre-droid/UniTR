@@ -35,10 +35,12 @@ fi
 PYTHON=/mnt/proj1/eu-25-122/andreaam/.conda/envs/unitr/bin/python
 PORT=$((29500 + $RANDOM % 100))
 
+# Updated projection head (matches iBOT)
 $PYTHON -m torch.distributed.launch --nproc_per_node=8 --master_port=$PORT \
     train_ssl.py \
     --launcher pytorch \
     --extra_tag full_dataset_v5.3 \
     --cfg_file cfgs/nuscenes_models/unitr_ibot_fusion_v5.1.yaml \
+    --ckpt /home/it4i-andreaam/UniTR/output/nuscenes_models/unitr_ibot_fusion_v5.1/full_dataset_v5.3/ckpt/latest_model.pth \
     --workers 8 \
     --sync_bn

@@ -17,6 +17,7 @@ from .transfusion import TransFusion
 from .bevfusion import BevFusion
 from .unitr import UniTR
 from .unitr_map import UniTRMAP
+from .unitr_strict_probe import UniTRStrictProbe
 from pcdet.models.ssl import iBOTUniTR
 __all__ = {
     'Detector3DTemplate': Detector3DTemplate,
@@ -39,6 +40,7 @@ __all__ = {
     'BevFusion': BevFusion,
     'UniTR': UniTR,
     'UniTRMAP':UniTRMAP,
+    'UniTRStrictProbe': UniTRStrictProbe,
     'iBOTUniTR': iBOTUniTR,
 }
 
