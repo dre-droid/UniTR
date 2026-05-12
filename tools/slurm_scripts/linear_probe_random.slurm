@@ -1,14 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=linear_probe_random
 #SBATCH --account=eu-25-122
-#SBATCH --partition=qgpu_free
+#SBATCH --partition=qgpu_exp
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=2
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64
 #SBATCH --output=slurm_logs/linear_probe_random_%j.out
 #SBATCH --error=slurm_logs/linear_probe_random_%j.err
-#SBATCH --time=12:00:00
 
 # Set environment
 module load Anaconda3

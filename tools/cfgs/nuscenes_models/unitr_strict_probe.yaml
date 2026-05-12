@@ -64,7 +64,7 @@ DATA_CONFIG:
           classes: ['drivable_area', 'ped_crossing', 'walkway', 'stop_line', 'carpark_area', 'divider']
           xbound: [-50.0, 50.0, 0.5]
           ybound: [-50.0, 50.0, 0.5]
-          dataset_root: '../data/nuscenes/v1.0-trainval'
+          dataset_root: '/scratch/project/eu-25-122/nuscenes_unpacked'
           location: ['singapore-onenorth', 'singapore-hollandvillage', 'singapore-queenstown', 'boston-seaport']
 
 MODEL:
