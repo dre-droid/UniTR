@@ -97,6 +97,15 @@ class iBOTUniTRSplit(nn.Module):
         self.voxel_masker = VoxelMasker(d_model, self.ssl_cfg.MASK_RATIO_VOXEL)
         self.patch_masker = PatchMasker(d_model, self.ssl_cfg.MASK_RATIO_PATCH)
 
+        # ---- Sonata-style masked voxel coordinate jitter ----
+        # Disrupts geometric shortcuts by adding noise to the voxel grid
+        # coordinates of masked positions BEFORE the backbone sees them.
+        # The backbone uses voxel_coords for windowed attention grouping —
+        # jittering masked coords forces the model to rely on learned features
+        # rather than trivially inferring semantics from spatial position.
+        # σ is in voxel-grid units (1 grid cell = 0.3m). Default 1.0 ≈ 0.3m.
+        self.masked_voxel_jitter_std = self.ssl_cfg.get('MASKED_VOXEL_JITTER_STD', 0.0)
+
         # ---- Loss (separate per modality to prevent center cross-contamination) ----
         loss_kwargs = dict(
             out_dim=proj_out,
@@ -201,6 +210,48 @@ class iBOTUniTRSplit(nn.Module):
             return self.teacher_temp_start + alpha * (self.teacher_temp_end - self.teacher_temp_start)
         return self.teacher_temp_end
 
+    @torch.no_grad()
+    def _jitter_masked_voxel_coords(self, student_batch, voxel_mask):
+        """
+        Sonata-inspired masked voxel coordinate jitter.
+
+        Adds Gaussian noise (in grid-cell units) to the voxel_coords of masked
+        voxels in the student batch. This disrupts the spatial information that
+        the UniTR backbone's windowed set attention uses for grouping,
+        preventing the geometric shortcut where the model can trivially predict
+        features from position alone.
+
+        Key insight from Sonata §4.2: "specifically for points to be masked, we
+        additionally apply a stronger Gaussian jitter to further disrupt their
+        spatial relationships. We pay special attention to these masked points
+        because models are more likely to collapse to naive geometric cues,
+        especially when point features are masked."
+
+        voxel_coords format: (N, 4) as [batch_idx, z, y, x] (integers)
+        We jitter the spatial dimensions [z, y, x] only.
+        Clamping ensures coords stay within the valid grid range.
+        """
+        if self.masked_voxel_jitter_std <= 0:
+            return student_batch
+
+        coords = student_batch['voxel_coords'].clone()  # (N, 4), int
+        n_masked = voxel_mask.sum().item()
+        if n_masked == 0:
+            return student_batch
+
+        # Generate Gaussian noise for the spatial dims (z, y, x) of masked voxels
+        noise = torch.randn(n_masked, 3, device=coords.device) * self.masked_voxel_jitter_std
+        noise = noise.round().int()  # Round to integer grid offsets
+
+        # Apply jitter to masked positions only (dims 1, 2, 3 = z, y, x)
+        coords[voxel_mask, 1:4] = coords[voxel_mask, 1:4] + noise
+
+        # Clamp to valid grid range (non-negative, within sparse_shape)
+        coords[:, 1:4] = coords[:, 1:4].clamp(min=0)
+
+        student_batch['voxel_coords'] = coords
+        return student_batch
+
     def forward(self, batch_dict):
         """
         Forward pass for iBOT pretraining with split projection heads.
@@ -225,6 +276,12 @@ class iBOTUniTRSplit(nn.Module):
 
         # ---- Step 2: Mask voxel features (student only) ----
         masked_voxel_features, voxel_mask = self.voxel_masker(student_voxel_features)
+
+        # ---- Step 2b: Sonata-style masked voxel coordinate jitter ----
+        # Apply AFTER masking but BEFORE backbone, so the backbone's windowed
+        # attention can't use precise spatial position to trivially recover
+        # masked features from their unmasked neighbors.
+        student_batch = self._jitter_masked_voxel_coords(student_batch, voxel_mask)
 
         # ---- Step 3: Student forward (masked) ----
         student_batch.update({

@@ -141,6 +141,9 @@ MODEL:
       CENTER_MOMENTUM: 0.9
       # --- Split-head specific ---
       PATCH_LOSS_WEIGHT: 1.0
+      # Sonata-style masked voxel coordinate jitter (in grid-cell units)
+      # 1.0 grid cell = 0.3m with voxel_size=[0.3, 0.3, 8.0]
+      MASKED_VOXEL_JITTER_STD: 1.0
       # Teacher temperature warmup (linear from START to END over N epochs)
       TEACHER_TEMP_START: 0.04
       TEACHER_TEMP_END: 0.07
