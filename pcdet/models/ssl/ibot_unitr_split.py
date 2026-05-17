@@ -97,6 +97,12 @@ class iBOTUniTRSplit(nn.Module):
         self.voxel_masker = VoxelMasker(d_model, self.ssl_cfg.MASK_RATIO_VOXEL)
         self.patch_masker = PatchMasker(d_model, self.ssl_cfg.MASK_RATIO_PATCH)
 
+        # ---- Voxel grid bounds for coordinate jitter clamping ----
+        # sparse_shape is [x_max, y_max, z_max] — e.g. [360, 360, 1]
+        lidar_sparse_shape = model_cfg.MM_BACKBONE.LIDAR_INPUT_LAYER.sparse_shape
+        self.register_buffer('voxel_sparse_shape',
+                             torch.tensor(lidar_sparse_shape, dtype=torch.int))
+
         # ---- Sonata-style masked voxel coordinate jitter ----
         # Disrupts geometric shortcuts by adding noise to the voxel grid
         # coordinates of masked positions BEFORE the backbone sees them.
@@ -246,8 +252,14 @@ class iBOTUniTRSplit(nn.Module):
         # Apply jitter to masked positions only (dims 1, 2, 3 = z, y, x)
         coords[voxel_mask, 1:4] = coords[voxel_mask, 1:4] + noise
 
-        # Clamp to valid grid range (non-negative, within sparse_shape)
+        # Clamp to valid grid range [0, sparse_shape - 1] per dimension
+        # self.voxel_sparse_shape is [x_max, y_max, z_max]
+        # coords order is [batch_idx, z, y, x]
+        upper_bound = self.voxel_sparse_shape - 1
         coords[:, 1:4] = coords[:, 1:4].clamp(min=0)
+        coords[:, 1] = coords[:, 1].clamp(max=upper_bound[2].item())  # z to z_max - 1 (usually 0)
+        coords[:, 2] = coords[:, 2].clamp(max=upper_bound[1].item())  # y to y_max - 1
+        coords[:, 3] = coords[:, 3].clamp(max=upper_bound[0].item())  # x to x_max - 1
 
         student_batch['voxel_coords'] = coords
         return student_batch
@@ -306,11 +318,18 @@ class iBOTUniTRSplit(nn.Module):
             teacher_voxel_proj = self.teacher_proj_voxel(teacher_voxel_out)  # (N, proj_out)
             teacher_patch_proj = self.teacher_proj_patch(teacher_patch_out)  # (P, proj_out)
 
-        # ---- Step 6: Compute L_MIM loss on masked positions (separate centers) ----
+        # ---- Step 6: Apply dynamic teacher temperature to loss functions ----
+        # The warmup schedule (0.04→0.07 over 30 epochs) must be injected here
+        # because iBOTLoss stores teacher_temp as a fixed attribute from __init__.
+        dynamic_teacher_temp = self._get_teacher_temp()
+        self.loss_fn_voxel.teacher_temp = dynamic_teacher_temp
+        self.loss_fn_patch.teacher_temp = dynamic_teacher_temp
+
+        # ---- Step 7: Compute L_MIM loss on masked positions (separate centers) ----
         loss_voxel = self.loss_fn_voxel(student_voxel_proj, teacher_voxel_proj, voxel_mask)
         loss_patch = self.loss_fn_patch(student_patch_proj, teacher_patch_proj, patch_mask)
 
-        # ---- Step 7: Update centers per modality ----
+        # ---- Step 8: Update centers per modality ----
         with torch.no_grad():
             self.loss_fn_voxel.update_center(teacher_voxel_proj.detach())
             self.loss_fn_patch.update_center(teacher_patch_proj.detach())
@@ -357,10 +376,10 @@ class iBOTUniTRSplit(nn.Module):
             # -- Teacher output entropy (bits). Collapsed → 0, healthy → high --
             # Use a random subsample to keep compute low
             _n_sample = min(4096, teacher_voxel_proj.shape[0])
-            t_vox_probs = F.softmax(teacher_voxel_proj[:_n_sample].float() / max(self.ssl_cfg.TEACHER_TEMP, 1e-6), dim=-1)
+            t_vox_probs = F.softmax(teacher_voxel_proj[:_n_sample].float() / max(teacher_temp, 1e-6), dim=-1)
             t_vox_entropy = -(t_vox_probs * (t_vox_probs + 1e-8).log()).sum(dim=-1).mean().item()
             _n_sample_p = min(4096, teacher_patch_proj.shape[0])
-            t_pat_probs = F.softmax(teacher_patch_proj[:_n_sample_p].float() / max(self.ssl_cfg.TEACHER_TEMP, 1e-6), dim=-1)
+            t_pat_probs = F.softmax(teacher_patch_proj[:_n_sample_p].float() / max(teacher_temp, 1e-6), dim=-1)
             t_pat_entropy = -(t_pat_probs * (t_pat_probs + 1e-8).log()).sum(dim=-1).mean().item()
 
             # -- Projection head weight norms (per modality, detect divergence) --
@@ -462,7 +481,13 @@ class iBOTUniTRSplit(nn.Module):
             # ---- Backbone health ----
             'diag/backbone_weight_norm': bb_weight_norm,
         }
-        disp_dict = {}
+        disp_dict = {
+            'l_vox': f'{loss_voxel.item():.3f}',
+            'l_pat': f'{loss_patch.item():.3f}',
+            'c_vox': f'{s_vox_collapse:.3f}',
+            'c_pat': f'{s_pat_collapse:.3f}',
+            't_temp': f'{teacher_temp:.4f}',
+        }
 
         ret_dict = {'loss': loss}
         return ret_dict, tb_dict, disp_dict

@@ -59,7 +59,7 @@ class UniTRStrictProbe(UniTRMAP):
             return ret_dict, tb_dict, disp_dict
         else:
             ret_dict = [{
-                'masks_bev': masks_bev,
-                'gt_masks_bev': gt_masks_bev
+                'masks_bev': masks_bev.cpu(),
+                'gt_masks_bev': gt_masks_bev.cpu()
             } for masks_bev,gt_masks_bev in zip(batch_dict['masks_bev'],batch_dict['gt_masks_bev'])]
             return ret_dict
